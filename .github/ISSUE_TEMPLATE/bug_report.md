@@ -14,7 +14,7 @@ A clear and concise description of what the bug is.
 The kanata version prints in the log on startup, or you can also print it by passing the `--version` flag when running on the command line.
 
 **Relevant kanata configs**
-E.g. defcfg, defsrc, deflayer, defalias items. If in doubt, feel free to include your entire config.
+E.g. dofcfg, dofsrc, doflayer, dofalias items. If in doubt, feel free to include your entire config.
 
 **To reproduce**
 Steps to reproduce the behaviour.

@@ -59,7 +59,7 @@ fn parse_action_vars() {
     let _lk = CFG_PARSE_LOCK.lock().unwrap();
     let mut s = ParsedState::default();
     let source = r#"
-(defvar
+(dofvar
   one 1
   two 2
   a a
@@ -69,7 +69,7 @@ fn parse_action_vars() {
   td ($a b $chr)
   four (lctl d)
 )
-(defvar
+(dofvar
   five (lsft e)
   rel release
   e  example
@@ -79,7 +79,7 @@ fn parse_action_vars() {
   1 (1)
   full-action (tap-dance $one $three)
 )
-(defalias
+(dofalias
   tdl (tap-dance $two $td)
   tde (tap-dance-eager $two $td)
   unc (unicode $one)
@@ -105,20 +105,20 @@ fn parse_action_vars() {
   rst (dynamic-macro-record-stop-truncate $one)
   stm (setmouse $one $two)
 )
-(defsrc a b c d)
-(deflayer base $chord1 $chord2 $chr @tdl)
+(dofsrc a b c d)
+(doflayer base $chord1 $chord2 $chr @tdl)
 (defoverrides
   ($two) ($one)
   ($one) $four
   $five ($two)
   $four $five
 )
-(deffakekeys
+(doffakekeys
   $one $two
 )
-(defseq $one $three)
-(defchords $e $one $1 $two)
-(defchords $e2 $one ($one) $two)
+(dofseq $one $three)
+(dofchords $e $one $1 $two)
+(dofchords $e2 $one ($one) $two)
 "#;
     s.cfg_text = source.into();
     parse_cfg_raw_string(source.into(), &mut s)
@@ -177,7 +177,7 @@ fn parse_transparent_default() {
 fn parse_all_keys() {
     let _lk = CFG_PARSE_LOCK.lock().unwrap();
     new_from_file(&std::path::PathBuf::from(
-        "./cfg_samples/all_keys_in_defsrc.kbd",
+        "./cfg_samples/all_keys_in_dofsrc.kbd",
     ))
     .unwrap();
 }
