@@ -5,4 +5,15 @@
 
 <h1 align="center">Doffed Kanata</h1>
 
-Learn about katana [here](https://github.com/drdilyor/doffed-kanata)
+Replaces all of the following with dof-alternative:
+- `defcfg`
+- `defsrc`
+- `deflocal*`
+- `deflayer`
+- `defalias`
+- `defvar`
+- `defseq`
+- `deffakekeys`
+- `defchords`
+
+Learn about kanata [here](https://github.com/drdilyor/doffed-kanata)
