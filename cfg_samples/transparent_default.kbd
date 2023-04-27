@@ -1,16 +1,16 @@
-(dofcfg
+(defcfg
   linux-dev /dev/input/by-path/platform-i8042-serio-0-event-kbd
 )
 
-(dofsrc
+(defsrc
        f13  f14  f15
 )
 
-(doflayer default
+(deflayer default
        _ (layer-switch test) (layer-toggle test)
 )
 
-(doflayer test
+(deflayer test
        (layer-switch default) (layer-toggle default) _
 )
 
