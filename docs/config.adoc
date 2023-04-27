@@ -48,19 +48,19 @@ a multi-line comment block
 [[required-configuration-entries]]
 == Required configuration entries
 
-[[defsrc]]
-=== defsrc
+[[dofsrc]]
+=== dofsrc
 <<table-of-contents,Back to ToC>>
 
-Your configuration file must have exactly one `defsrc` entry. This defines the
-order of keys that the `+deflayer+` entries will operate on.
+Your configuration file must have exactly one `dofsrc` entry. This defines the
+order of keys that the `+doflayer+` entries will operate on.
 
-A `defsrc` entry is composed of `defsrc` followed by key names that are
+A `dofsrc` entry is composed of `dofsrc` followed by key names that are
 separated by whitespace.
 
-It should be noted that the `defsrc` entry is treated as a long sequence; the
+It should be noted that the `dofsrc` entry is treated as a long sequence; the
 amount of whitespace (spaces, tabs, newlines) are not relevant. You may use
-spaces, tabs, or newlines however you like to visually format `defsrc` to your
+spaces, tabs, or newlines however you like to visually format `dofsrc` to your
 liking.
 
 The the primary source of all key names is the
@@ -68,12 +68,12 @@ https://github.com/jtroo/kanata/blob/main/src/keys/mod.rs[str_to_oscode]
 function in the source code. Please feel free to file an issue if you're unable
 to find the key you're looking for.
 
-An example `defsrc` containing the US QWERTY keyboard keys as an
+An example `dofsrc` containing the US QWERTY keyboard keys as an
 approximately 60% keyboard layout:
 
 [source]
 ----
-(defsrc
+(dofsrc
   grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -84,29 +84,29 @@ approximately 60% keyboard layout:
 
 For non-US keyboards, see <<non-us-keyboards,this section>>.
 
-[[deflayer]]
-=== deflayer
+[[doflayer]]
+=== doflayer
 <<table-of-contents,Back to ToC>>
 
-Your configuration file must have at least one `+deflayer+` entry. This defines
-how each physical key mapped in `+defsrc+` behaves when kanata runs.
+Your configuration file must have at least one `+doflayer+` entry. This defines
+how each physical key mapped in `+dofsrc+` behaves when kanata runs.
 
-A `+deflayer+` configuration entry is followed by the layer name then a list of
-keys or actions. The usable key names are the same as in defsrc. Actions are
+A `+doflayer+` configuration entry is followed by the layer name then a list of
+keys or actions. The usable key names are the same as in dofsrc. Actions are
 explained further on in this document. The whitespace story is the same as with
-`+defsrc+`. The order of keys/actions in `+deflayer+` corresponds to the
-physical key in the same sequence position defined in `+defsrc+`.
+`+dofsrc+`. The order of keys/actions in `+doflayer+` corresponds to the
+physical key in the same sequence position defined in `+dofsrc+`.
 
 The first layer defined in your configuration file will be the starting layer
 when kanata runs. Other layers can be temporarily activated or switched to
 using actions. There is currently a maximum of 25 layers allowed.
 
-An example `defsrc` and `deflayer` that remaps QWERTY to the Dvorak layout
+An example `dofsrc` and `doflayer` that remaps QWERTY to the Dvorak layout
 would be:
 
 [source]
 ----
-(defsrc
+(dofsrc
   grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -114,7 +114,7 @@ would be:
   lctl lmet lalt           spc            ralt rmet rctl
 )
 
-(deflayer dvorak
+(doflayer dvorak
   grv  1    2    3    4    5    6    7    8    9    0    [    ]    bspc
   tab  '    ,    .    p    y    f    g    c    r    l    /    =    \
   caps a    o    e    u    i    d    h    t    n    s    -    ret
@@ -129,16 +129,16 @@ would be:
 
 If you're reading in order, you have now seen all of the required entries:
 
-* `+defsrc+`
-* `+deflayer+`
+* `+dofsrc+`
+* `+doflayer+`
 
 An example minimal configuration is:
 
 [source]
 ----
-(defsrc a b c)
+(dofsrc a b c)
 
-(deflayer start 1 2 3)
+(doflayer start 1 2 3)
 ----
 
 This will make kanata remap your `a b c` keys to `1 2 3`. This is almost
@@ -149,19 +149,19 @@ certainly undesirable but is a valid configuration.
 <<table-of-contents,Back to ToC>>
 
 For non-US keyboard users, you may have some keys on your keyboard with characters
-that are not allowed in `defsrc` by default, at least according to the symbol
-shown. You can use `deflocalkeys` to define additional key names that can be
-used in `defsrc`, `deflayer` and anywhere else in the configuration.
+that are not allowed in `dofsrc` by default, at least according to the symbol
+shown. You can use `doflocalkeys` to define additional key names that can be
+used in `dofsrc`, `doflayer` and anywhere else in the configuration.
 
-There are three variants of deflocalkeys:
+There are three variants of doflocalkeys:
 
-- `deflocalkeys-win`
-- `deflocalkeys-wintercept`
-- `deflocalkeys-linux`
+- `doflocalkeys-win`
+- `doflocalkeys-wintercept`
+- `doflocalkeys-linux`
 
 
-Only one of each deflocalkeys-* variant is allowed. The variants that are not
-applicable will be ignored, e.g. `deflocalkeys-linux` and `deflocalkeys-wintercept`
+Only one of each doflocalkeys-* variant is allowed. The variants that are not
+applicable will be ignored, e.g. `doflocalkeys-linux` and `doflocalkeys-wintercept`
 are both ignored when using the default Windows kanata binary.
 
 You can find configurations that others have made in https://github.com/jtroo/kanata/blob/main/docs/locales.adoc[this
@@ -172,19 +172,19 @@ Please contribute to the document if you are able!
 .Example:
 [source]
 ----
-(deflocalkeys-win
+(doflocalkeys-win
   ì 187
 )
 
-(deflocalkeys-wintercept
+(doflocalkeys-wintercept
   ì 187
 )
 
-(deflocalkeys-linux
+(doflocalkeys-linux
   ì 13
 )
 
-(defsrc
+(dofsrc
   grv  1    2    3    4    5    6    7    8    9    0    -    ì    bspc
 )
 ----
@@ -207,14 +207,14 @@ mentioned before, please ask for help in an issue or discussion if needed, and
 help with https://github.com/jtroo/kanata/blob/main/docs/locales.adoc[this document] is very welcome so that future
 users can have an easier time 🙂.
 
-[[optional-defcfg-entries]]
-== Optional defcfg entries
+[[optional-dofcfg-entries]]
+== Optional dofcfg entries
 
-[[defcfg]]
-=== defcfg
+[[dofcfg]]
+=== dofcfg
 <<table-of-contents,Back to ToC>>
 
-Your configuration file may include a single `defcfg` entry.
+Your configuration file may include a single `dofcfg` entry.
 
 It can be empty but there are options that can change kanata's behaviour that
 will be described in this section.
@@ -222,19 +222,19 @@ will be described in this section.
 .Example:
 [source]
 ----
-(defcfg)
+(dofcfg)
 ----
 
 [[process-unmapped-keys]]
 === process-unmapped-keys
 <<table-of-contents,Back to ToC>>
 
-Enabling this configuration makes kanata process keys that are not in defsrc.
-This is useful if you are only mapping a few keys in defsrc instead of most of
+Enabling this configuration makes kanata process keys that are not in dofsrc.
+This is useful if you are only mapping a few keys in dofsrc instead of most of
 the keys on your keyboard.
 
 Without this, some actions like `+rpt+`, `+tap-hold-release+`, `+one-shot+`,
-will not work correctly for subsequent key presses that are not in defsrc.
+will not work correctly for subsequent key presses that are not in dofsrc.
 
 This is disabled by default. The reason this is not enabled by default is
 because some keys may not work correctly if they are intercepted. For example,
@@ -243,7 +243,7 @@ see the <<windows-only-windows-altgr>> option below.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   process-unmapped-keys yes
 )
 ----
@@ -266,7 +266,7 @@ value `yes`.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   danger-enable-cmd yes
 )
 ----
@@ -281,7 +281,7 @@ is 1000. The purpose of this item is explained in <<sequences>>.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   sequence-timeout 2000
 )
 ----
@@ -313,7 +313,7 @@ See <<sequences>> for more about sequences.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   sequence-input-mode visible-backspaced
 )
 ----
@@ -329,7 +329,7 @@ to intercept them all. However, you may specify exact keyboard devices from the
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   linux-dev /dev/input/by-path/platform-i8042-serio-0-event-kbd
 )
 ----
@@ -340,7 +340,7 @@ colon `+:+`.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   linux-dev /dev/input/dev1:/dev/input/dev2
 )
 ----
@@ -350,7 +350,7 @@ its file name, you must escape those colons with backslashes:
 
 [source]
 ----
-(defcfg
+(dofcfg
   linux-dev /dev/input/path-to\:device
 )
 ----
@@ -365,7 +365,7 @@ overhead. If you do not care for the logging, you can choose to disable it.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   log-layer-changes no
 )
 ----
@@ -380,7 +380,7 @@ this behaviour by setting `linux-continue-if-no-devs-found`.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   linux-continue-if-no-devs-found yes
 )
 ----
@@ -404,7 +404,7 @@ is sent. Then you can use this configuration to change kanata's behaviour.
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   linux-unicode-u-code v
 )
 ----
@@ -423,7 +423,7 @@ some applications. The termination is configurable with the following options:
 
 [source]
 ----
-(defcfg
+(dofcfg
   linux-unicode-termination space
 )
 ----
@@ -433,7 +433,7 @@ some applications. The termination is configurable with the following options:
 <<table-of-contents,Back to ToC>>
 
 There is an option for Windows to help mitigate the strange behaviour of AltGr
-(ralt) if you're using that key in your defsrc. This is applicable for many
+(ralt) if you're using that key in your dofsrc. This is applicable for many
 non-US layouts. You can use one of the listed values to change what kanata does
 with the key:
 
@@ -445,14 +445,14 @@ with the key:
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   windows-altgr add-lctl-release
 )
 ----
 
 For more context, see: https://github.com/jtroo/kanata/issues/55.
 
-NOTE: Even with these workarounds, putting `+lctl+`+`+ralt+` in your defsrc may not
+NOTE: Even with these workarounds, putting `+lctl+`+`+ralt+` in your dofsrc may not
 work properly with other applications that also use keyboard interception.
 Known application with issues: GWSL/VcXsrv
 
@@ -460,7 +460,7 @@ Known application with issues: GWSL/VcXsrv
 === Windows only: windows-interception-mouse-hwid
 <<table-of-contents,Back to ToC>>
 
-This defcfg item allows you to intercept mouse buttons for a specific mouse
+This dofcfg item allows you to intercept mouse buttons for a specific mouse
 device. This only works with the Interception driver (the -wintercept variants
 of the binary).
 
@@ -468,9 +468,9 @@ The intended use case for this is for laptops such as a Thinkpad, which have
 mouse buttons that may be desirable to activate kanata actions with.
 
 To know what numbers to put into the string, you can run the variant with this
-defcfg item defined with any numbers. Then when a button is first pressed on
+dofcfg item defined with any numbers. Then when a button is first pressed on
 the mouse device, kanata will print its hwid in the log; you can then
-copy-paste that into this configuration entry. If this defcfg item is not
+copy-paste that into this configuration entry. If this dofcfg item is not
 defined, the log will not print.
 
 https://github.com/jtroo/kanata/issues/108[Relevant issue].
@@ -478,32 +478,32 @@ https://github.com/jtroo/kanata/issues/108[Relevant issue].
 .Example:
 [source]
 ----
-(defcfg
+(dofcfg
   windows-interception-mouse-hwid "70, 0, 60, 0"
 )
 ----
 
-[[using-multiple-defcfg-entries]]
-=== Using multiple defcfg entries
+[[using-multiple-dofcfg-entries]]
+=== Using multiple dofcfg entries
 <<table-of-contents,Back to ToC>>
 
-The `defcfg` entry is treated as a list with pairs of strings. For example:
+The `dofcfg` entry is treated as a list with pairs of strings. For example:
 
 [source]
 ----
-(defcfg a 1 b 2)
+(dofcfg a 1 b 2)
 ----
 
 This will be treated as configuration `a` having value `1` and configuration
 `b` having value `2`.
 
-An example defcfg containing all of the options is shown below. It should be
+An example dofcfg containing all of the options is shown below. It should be
 noted options that are Linux-only or Windows-only will be ignored when used on
 a non-applicable operating system.
 
 [source]
 ----
-(defcfg
+(dofcfg
   process-unmapped-keys yes
   danger-enable-cmd yes
   sequence-timeout 2000
@@ -529,64 +529,64 @@ it will be useful to first learn about aliases and variables.
 === Aliases
 <<table-of-contents,Back to ToC>>
 
-Using the `defalias` configuration entry, you can introduce a shortcut label
+Using the `dofalias` configuration entry, you can introduce a shortcut label
 for an action.
 
-Similar to how `defcfg` works, `defalias` reads pairs of items in a sequence
+Similar to how `dofcfg` works, `dofalias` reads pairs of items in a sequence
 where the first item in the pair is the alias name and the second item is the
-action it can be substituted for. However, unlike `+defcfg+`, the second item
-in `defalias` may be a "list" as opposed to a single string like it was in
-`defcfg`.
+action it can be substituted for. However, unlike `+dofcfg+`, the second item
+in `dofalias` may be a "list" as opposed to a single string like it was in
+`dofcfg`.
 
 A list is a sequence of strings separated by whitespace, surrounded by
 parentheses. All of the configuration entries we've looked at so far are lists;
-`defalias` is where we'll first see nested lists in this guide.
+`dofalias` is where we'll first see nested lists in this guide.
 
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   ;; tap for caps lock, hold for left control
   cap (tap-hold 200 200 caps lctl)
 )
 ----
 
-This alias can be used in `deflayer` as a substitute for the long action. The
+This alias can be used in `doflayer` as a substitute for the long action. The
 alias name is prefixed with `@` to signify that it's an alias as opposed to a
 normal key.
 
 [source]
 ----
-(deflayer example
+(doflayer example
   @cap a s d f
 )
 ----
 
-You may have multiple `defalias` entries and multiple aliases within a single
-`defalias`. Aliases may also refer to other aliases that were defined earlier
+You may have multiple `dofalias` entries and multiple aliases within a single
+`dofalias`. Aliases may also refer to other aliases that were defined earlier
 in the configuration file.
 
 .Example:
 [source]
 ----
-(defalias one (tap-hold 200 200 caps lctl))
-(defalias two (tap-hold 200 200 esc lctl))
-(defalias
+(dofalias one (tap-hold 200 200 caps lctl))
+(dofalias two (tap-hold 200 200 esc lctl))
+(dofalias
   three C-A-del ;; Ctrl+Alt+Del
   four (tap-hold 200 200 @three ralt)
 )
 ----
 
-You can choose to put actions without aliasing them right into `deflayer`.
+You can choose to put actions without aliasing them right into `doflayer`.
 However, for long actions it is recommended not to do so to keep a nice visual
-alignment. Visually aligning your `deflayer` entries will hopefully make your
+alignment. Visually aligning your `doflayer` entries will hopefully make your
 configuration file easier to read.
 
 .Example:
 [source]
 ----
-(deflayer example
-  ;; this is equivalent to the previous deflayer example
+(doflayer example
+  ;; this is equivalent to the previous doflayer example
   (tap-hold 200 200 caps lctl) a s d f
 )
 ----
@@ -595,7 +595,7 @@ configuration file easier to read.
 === Variables
 <<table-of-contents,Back to ToC>>
 
-Using the `defvar` configuration entry,
+Using the `dofvar` configuration entry,
 you can introduce a shortcut label for an arbitrary string or list.
 Unlike an alias, a variable does not need to be a valid standalone action.
 In other words,
@@ -604,8 +604,8 @@ a variable can be used as components of actions.
 The most common use case is to define common number strings
 for actions such as `tap-hold`, `tap-dance`, and `one-shot`.
 
-Similar to how `defalias` works,
-`defvar` reads pairs of items in a sequence
+Similar to how `dofalias` works,
+`dofvar` reads pairs of items in a sequence
 where the first item in the pair is the variable name
 and the second item is a string or list.
 Variables are allowed to refer to previously defined variables.
@@ -613,7 +613,7 @@ Variables are allowed to refer to previously defined variables.
 Variables can be used to substitute most values.
 Some notable exceptions are:
 
-- variables cannot be used in `defcfg`, `defsrc`, or `deflocalkeys`
+- variables cannot be used in `dofcfg`, `dofsrc`, or `doflocalkeys`
 - variables cannot be used to substitute a layer name
 - variables cannot be used to substitute an action name
 
@@ -622,14 +622,14 @@ Variables are referred to by prefixing their name with `$`.
 .Example:
 [source]
 ----
-(defvar
+(dofvar
   tap-timeout   100
   hold-timeout  200
   tt $tap-timeout
   ht $hold-timeout
 )
 
-(defalias
+(dofalias
   th1 (tap-hold $tt $ht caps lctl)
   th2 (tap-hold $tt $ht spc  lsft)
 )
@@ -652,7 +652,7 @@ configuration.
 .Example:
 [source]
 ----
-(deflayer has-live-reload
+(doflayer has-live-reload
   lrld a s d f
 )
 ----
@@ -666,7 +666,7 @@ well.
 .Example:
 [source]
 ----
-(deflayer has-live-reloads
+(doflayer has-live-reloads
   lrld lrpv lrnx
 )
 ----
@@ -690,7 +690,7 @@ double-tapping a key.
 .Example:
 [source]
 ----
-(deflayer has-repeat
+(doflayer has-repeat
   rpt a s d f
 )
 ----
@@ -704,12 +704,12 @@ until a `layer-switch` to another layer is activated. The concept of a base
 layer makes more sense when looking at the next action: `layer-while-held`.
 
 This action accepts a single subsequent string which must be a layer name
-defined in a `deflayer` entry.
+defined in a `doflayer` entry.
 
 .Example:
 [source]
 ----
-(defalias dvk (layer-switch dvorak))
+(dofalias dvk (layer-switch dvorak))
 ----
 
 [[layer-while-held]]
@@ -721,12 +721,12 @@ remains held. When the key is released, you go back to the currently active
 "base" layer.
 
 This action accepts a single subsequent string which must be a layer name
-defined in a `deflayer` entry.
+defined in a `doflayer` entry.
 
 .Example:
 [source]
 ----
-(defalias nav (layer-while-held navigation))
+(dofalias nav (layer-while-held navigation))
 ----
 
 You may also use `layer-toggle` in place of `layer-while-held`; they behave
@@ -738,19 +738,19 @@ inaccurate with regards to its meaning.
 <<table-of-contents,Back to ToC>>
 
 If you use a single underscore for a key `+_+` then it acts as a "transparent"
-key in a `+deflayer+`. The behaviour depends if `+_+` is on a base layer or a
+key in a `+doflayer+`. The behaviour depends if `+_+` is on a base layer or a
 while-held layer. When `+_+` is pressed on the active base layer, the key will
-default to the corresponding `defsrc` key. If `+_+` is pressed on the active
+default to the corresponding `dofsrc` key. If `+_+` is pressed on the active
 while-held layer, the base layer's behaviour will activate.
 
 .Example:
 [source]
 ----
-(defsrc
+(dofsrc
   a b c
 )
 
-(deflayer remap-only-c-to-d
+(doflayer remap-only-c-to-d
   _ _ d
 )
 ----
@@ -767,7 +767,7 @@ will do nothing as opposed to typing a letter.
 .Example:
 [source]
 ----
-(deflayer contains-no-op
+(doflayer contains-no-op
   XX a s d f
 )
 ----
@@ -785,15 +785,15 @@ NOTE: The unicode action may not be correctly accepted by the active
 application.
 
 NOTE: If using Linux, make sure to look at the
-<<linux-only-linux-unicode-u-code,unicode behaviour customization>> in defcfg.
+<<linux-only-linux-unicode-u-code,unicode behaviour customization>> in dofcfg.
 
 [source]
 ----
-(defalias
+(dofalias
   sml (unicode 😀)
   🙁 (unicode 🙁)
 )
-(deflayer has-happy-sad
+(doflayer has-happy-sad
   @sml @🙁 a s d f
 )
 ----
@@ -817,7 +817,7 @@ These modifiers may be combined together if desired.
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   ;; Ctrl+C: send SIGINT to a Linux terminal program
   int C-c
   ;; Win+Tab: open Windows' Task View
@@ -834,7 +834,7 @@ These modifiers may be combined together if desired.
 
 You can release a held key or layer via these actions:
 
-* `release-key`: release a key, accepts `defsrc` compatible names
+* `release-key`: release a key, accepts `dofsrc` compatible names
 * `release-layer`: release a while-held layer
 
 An example practical use case for `release-key` is seen in the `multi` section
@@ -871,21 +871,21 @@ functionality.
 
 [source]
 ----
-(defalias
+(dofalias
   atl (multi alt (layer-while-held alted-with-exceptions))
   lft (multi (release-key alt) left) ;; release alt if held and also press left
   rgt (multi (release-key alt) rght) ;; release alt if held and also press rght
 )
 
-(defsrc
+(dofsrc
   alt  a    s    d    f
 )
 
-(deflayer base
+(doflayer base
   @atl _    _    _    _
 )
 
-(deflayer alted-with-exceptions
+(doflayer alted-with-exceptions
   _    _    _    @lft @rgt
 )
 ----
@@ -1017,7 +1017,7 @@ Experimentation will be needed.
 
 [source]
 ----
-(defalias
+(dofalias
   mwu (mwheel-up 50 120)
   mwd (mwheel-down 50 120)
   mwl (mwheel-left 50 120)
@@ -1036,7 +1036,7 @@ Experimentation will be needed.
   sm (setmouse 32228 32228)
 )
 
-(deflayer mouse
+(doflayer mouse
   _    @mwu @mwd @mwl @mwr _    _    _    _    _    @ma↑ _    _    _
   _    pgup bck  _    fwd  _    _    _    _    @ma← @ma↓ @ma→ _    _
   _    pgdn mlft _    mrgt mmid _    mbck mfwd _    @ms↑ _    _
@@ -1063,7 +1063,7 @@ You may put normal keys or other actions in `+tap-dance+`.
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   ;; 1 tap : "A" key
   ;; 2 taps: Control+C
   ;; 3 taps: Switch to another layer
@@ -1084,7 +1084,7 @@ In the example below, repeated taps will, in order:
 
 [source]
 ----
-(defalias
+(dofalias
   td2 (tap-dance-eager 500 (
     (macro a) ;; use macro to prevent auto-repeat of the key
     (macro bspc b b)
@@ -1139,7 +1139,7 @@ The default name `+one-shot+` corresponds to `+one-shot-press+`.
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   os1 (one-shot 500 (layer-while-held another-layer))
   os2 (one-shot-press 2000 lsft)
   os3 (one-shot-release 2000 lctl)
@@ -1186,7 +1186,7 @@ but you should be wary of activating the hold action unintentionally.
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   anm (tap-hold         200 200 a @num) ;; tap: a      hold: numbers layer
   oar (tap-hold-press   200 200 o @arr) ;; tap: o      hold: arrows layer
   ech (tap-hold-release 200 200 e @chr) ;; tap: e      hold: chords layer
@@ -1212,7 +1212,7 @@ waiting.
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   ;; tap: o    hold: arrows layer    timeout: backspace
   oat (tap-hold-press-timeout   200 200 o @arr bspc)
   ;; tap: e    hold: chords layer    timeout: esc
@@ -1253,7 +1253,7 @@ The actions supported in `+macro+` are:
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   : S-;
   8 8
   0 0
@@ -1284,7 +1284,7 @@ and the rest of the macro does not run.
 
 [source]
 ----
-(defalias
+(dofalias
   1 1
 
   ;; macro-release-cancel to output different characters with visual feedback
@@ -1301,7 +1301,7 @@ only the most recently pressed macro will be repeated.
 
 [source]
 ----
-(defalias
+(dofalias
   mr1 (macro-repeat mltp)
   mr2 (macro-repeat-release-cancel mltp)
 )
@@ -1343,7 +1343,7 @@ while recording with `(dynamic-macro-record 0)` will be ignored.
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   dr0 (dynamic-macro-record 0)
   dr1 (dynamic-macro-record 1)
   dr2 (dynamic-macro-record 2)
@@ -1367,7 +1367,7 @@ if any of the keys in the third parameter (right-trigger-keys) are currently act
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   frk (fork k @special (lalt ralt))
 )
 ----
@@ -1411,7 +1411,7 @@ and what the extra non-terminal+non-capitalized keys should be (3rd parameter).
 
 [source]
 ----
-(defalias
+(dofalias
   cw (caps-word 2000)
 
   ;; This example is similar to the default caps-word behaviour but it moves the
@@ -1440,7 +1440,7 @@ substituted with your home directory.
 .Example:
 [source]
 ----
-(defalias
+(dofalias
   cm1 (cmd rm -fr /tmp/testing)
 
   ;; You can use bash -c and then a quoted string to execute arbitrary text in
@@ -1456,7 +1456,7 @@ chorded lists are supported. Delays and other actions are not supported.
 
 [source]
 ----
-(defalias
+(dofalias
   ;; bash: type date-time as YYYY-MM-DD HH:MM
   pdb (cmd-output-keys bash -c "date +'%F %R' | sed 's/./& /g' | sed 's/:/S-;/g' | sed 's/\(.\{20\}\)\(.*\)/\(\1 spc \2\)/'")
 
@@ -1482,7 +1482,7 @@ SendInput.
 
 [source]
 ----
-(defalias
+(dofalias
   ab1 (arbitrary-code 700)
 )
 ----
@@ -1491,7 +1491,7 @@ SendInput.
 == Global overrides
 <<table-of-contents,Back to ToC>>
 
-The `defoverrides` optional configuration item allows you to create global
+The `dofoverrides` optional configuration item allows you to create global
 key overrides, irrespective of what actions are used to generate those keys.
 It accepts pairs of lists:
 
@@ -1501,13 +1501,13 @@ It accepts pairs of lists:
 Both input and output lists accept 0 or more modifier keys (e.g. lctl, rsft)
 and exactly 1 non-modifier key (e.g. 1, bspc).
 
-Only zero or one `defoverrides` is allowed in a configuration file.
+Only zero or one `dofoverrides` is allowed in a configuration file.
 
 .Example:
 [source]
 ----
 ;; Swap numbers and their symbols with respect to shift
-(defoverrides
+(dofoverrides
   (1) (lsft 1)
   (2) (lsft 2)
   ;; repeat for all remaining numbers
@@ -1533,9 +1533,9 @@ physical key presses and can only be activated via these actions:
 * `+(on-release-fakekey <fake key name> <key action>)+`: Activate a fake key
   action when releasing the key mapped to this action.
 
-A fake key can be defined in a `+deffakekeys+` configuration entry. Configuring
-this entry is similar to `+defalias+`, but you cannot make use of aliases
-inside of `+deffakekeys+` to shorten an action. You can however refer to
+A fake key can be defined in a `+doffakekeys+` configuration entry. Configuring
+this entry is similar to `+dofalias+`, but you cannot make use of aliases
+inside of `+doffakekeys+` to shorten an action. You can however refer to
 previously defined fake keys.
 
 The aforementioned `+<key action>+` can be one of three values:
@@ -1548,7 +1548,7 @@ The aforementioned `+<key action>+` can be one of three values:
 .Example:
 [source]
 ----
-(deffakekeys
+(doffakekeys
   ctl lctl
   sft lsft
   met lmet
@@ -1571,7 +1571,7 @@ The aforementioned `+<key action>+` can be one of three values:
       )
 )
 
-(defalias
+(dofalias
   psf (on-press-fakekey sft press)
   rsf (on-press-fakekey sft release)
 
@@ -1579,7 +1579,7 @@ The aforementioned `+<key action>+` can be one of three values:
   ral (on-press-fakekey ral tap)
 )
 
-(deflayer use-fake-keys
+(doflayer use-fake-keys
   @psf @rsf @pal @ral a s d f
 )
 ----
@@ -1600,7 +1600,7 @@ that `+macro+` supports more actions.
 
 [source]
 ----
-(defalias
+(dofalias
   stm (multi ;; Shift -> middle mouse with a delay
     (on-press-fakekey lsft press)
     (on-press-fakekey-delay 200)
@@ -1632,7 +1632,7 @@ until one of the following happens:
 * A key is typed that does not match any sequence
 * `+sequence-timeout+` milliseconds elapses since the most recent key press
 
-Sequences are configured similarly to `+deffakekeys+`. The first parameter of a
+Sequences are configured similarly to `+doffakekeys+`. The first parameter of a
 pair must be a defined fake key name. The second parameter is a list of keys
 that will activate a fake key tap when typed in the defined order. More
 precisely, the action triggered is:
@@ -1642,9 +1642,9 @@ precisely, the action triggered is:
 .Example:
 [source]
 ----
-(defseq git-status (g s t))
-(deffakekeys git-status (macro g i t spc s t a t u s))
-(defalias rcl (tap-hold-release 200 200 sldr rctl))
+(dofseq git-status (g s t))
+(doffakekeys git-status (macro g i t spc s t a t u s))
+(dofalias rcl (tap-hold-release 200 200 sldr rctl))
 ----
 
 For more context, you can read the
@@ -1660,25 +1660,25 @@ of input keys are pressed together. Such an unordered combination of keys
 is called a "chord". Each chord can perform a different action, allowing you
 to bind up to `+2^n - 1+` different actions to just `+n+` keys.
 
-Input chords are configured similarly to `+defalias+` with two extra parameters
-at the beginning of each `+defchords+` group: the name of the group and a
+Input chords are configured similarly to `+dofalias+` with two extra parameters
+at the beginning of each `+dofchords+` group: the name of the group and a
 timeout value after which a chord triggers if it isn't triggered by a key release
 or press of a non-chord key before the timeout expires.
 
 [source]
 ----
-(defsrc a b c)
-(deflayer default
+(dofsrc a b c)
+(doflayer default
   @cha @chb @chc
 )
 
-(defalias
+(dofalias
   cha (chord example a)
   chb (chord example b)
   chc (chord example c)
 )
 
-(defchords example 500
+(dofchords example 500
   (a      ) a
   (   b   ) b
   (a     c) C-v
@@ -1691,7 +1691,7 @@ The second item of each pair is the action to be executed when the given chord
 is pressed and may be any regular or advanced action, including aliases. It
 currently cannot however contain another `+chord+` action.
 
-Note that unlike with `+defseq+`, these keys do not directly correspond to real
+Note that unlike with `+dofseq+`, these keys do not directly correspond to real
 keys and are merely arbitrary labels that make sense within the context of the
 chord.
 They are mapped to real keys in layers by configuring the key in the layer to
@@ -1707,11 +1707,11 @@ and it maps to a tap-hold with a chord as the hold action within, that chord
 key will immediately activate instead of the key needing to be held for the
 timeout period.
 
-[[defaliasenvcond]]
-=== defaliasenvcond
+[[dofaliasenvcond]]
+=== dofaliasenvcond
 <<table-of-contents,Back to ToC>>
 
-There is a variant of `defalias`: `defaliasenvcond`.
+There is a variant of `dofalias`: `dofaliasenvcond`.
 This variant is parsed similarly,
 but there must be an extra list parameter
 that comes before all of the name-action pairs.
@@ -1725,7 +1725,7 @@ has the corresponding value when starting kanata,
 the aliases within will be active.
 Otherwise, the aliases will be skipped.
 
-A use case for `defaliasenvcond` is when one has multiple devices
+A use case for `dofaliasenvcond` is when one has multiple devices
 which vary in layout of keys,
 e.g. different special keys on the bottom row.
 Using environment variables, one can use the same kanata
@@ -1739,11 +1739,11 @@ the same.
 .Example:
 [source]
 ----
-(defaliasenvcond (LAPTOP lp1)
+(dofaliasenvcond (LAPTOP lp1)
   met @lp1met
 )
 
-(defaliasenvcond (LAPTOP lp2)
+(dofaliasenvcond (LAPTOP lp2)
   met @lp2met
 )
 ----

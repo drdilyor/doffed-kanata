@@ -9,13 +9,13 @@
 ;; also hopefully have helpful error messages in case something goes wrong.
 ;; If you need help, you are welcome to ask.
 
-;; Only one defsrc is allowed.
+;; Only one dofsrc is allowed.
 ;;
-;; defsrc defines the keys that will be intercepted by kanata. The order of the
-;; keys matches with deflayer declarations and all deflayer declarations must
-;; have the same number of keys as defsrc. Any keys not listed in defsrc will
+;; dofsrc defines the keys that will be intercepted by kanata. The order of the
+;; keys matches with doflayer declarations and all doflayer declarations must
+;; have the same number of keys as dofsrc. Any keys not listed in dofsrc will
 ;; be passed straight to the operating system.
-(defsrc
+(dofsrc
   grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -28,7 +28,7 @@
 ;; backtick/grave key (@grl) which is an alias for a tap-hold key.
 ;;
 ;; There are currently a maximum of 25 layers allowed.
-(deflayer qwerty
+(doflayer qwerty
   @grl 1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -39,7 +39,7 @@
 ;; The dvorak layer remaps the keys to the dvorak layout. In addition there is
 ;; another tap-hold key: @cap. This key retains caps lock functionality when
 ;; quickly tapped but is read as left-control when held.
-(deflayer dvorak
+(doflayer dvorak
   @grl 1    2    3    4    5    6    7    8    9    0    [    ]    bspc
   tab  '    ,    .    p    y    f    g    c    r    l    /    =    \
   @cap a    o    e    u    i    d    h    t    n    s    -    ret
@@ -47,12 +47,12 @@
   lctl lmet lalt           spc            ralt rmet rctl
 )
 
-;; defalias is used to declare a shortcut for a more complicated action to keep
-;; the deflayer declarations clean and aligned. The alignment in deflayers is not
+;; dofalias is used to declare a shortcut for a more complicated action to keep
+;; the doflayer declarations clean and aligned. The alignment in doflayers is not
 ;; necessary, but is strongly recommended for ease of understanding visually.
 ;;
 ;; Aliases are referred to by `@<alias_name>`.
-(defalias
+(dofalias
   ;; tap: backtick (grave), hold: toggle layer-switching layer while held
   grl (tap-hold 200 200 grv (layer-toggle layers))
 
@@ -73,7 +73,7 @@
 ;; Apart from the layer switching and live reload, all other keys are the
 ;; underscore _ which means "transparent". Transparent means the base layer
 ;; behaviour is used when pressing that key.
-(deflayer layers
+(doflayer layers
   _    @qwr @dvk lrld _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _
