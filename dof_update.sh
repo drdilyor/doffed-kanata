@@ -13,8 +13,6 @@ for f in *; do
   fi
 done
 
-git add .
-git commit -m "merged main at $(git rev-parse main)"
 
 for f in *; do
   if [[ $(git ls-files $f) != "" && $f != "dof_update.sh" && $f != README.md ]]; then
@@ -24,3 +22,6 @@ for f in *; do
     done
   fi
 done
+
+git add .
+git commit -m "merged main at $(git rev-parse main)"
