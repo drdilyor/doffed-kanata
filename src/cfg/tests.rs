@@ -77,7 +77,7 @@ fn parse_action_vars() {
     };
     let mut s = ParsedState::default();
     let source = r#"
-(dofvar
+(defvar
   one 1
   two 2
   a a
@@ -87,7 +87,7 @@ fn parse_action_vars() {
   td ($a b $chr)
   four (lctl d)
 )
-(dofvar
+(defvar
   five (lsft e)
   rel release
   e  example
@@ -97,7 +97,7 @@ fn parse_action_vars() {
   1 (1)
   full-action (tap-dance $one $three)
 )
-(dofalias
+(defalias
   tdl (tap-dance $two $td)
   tde (tap-dance-eager $two $td)
   unc (unicode $one)
@@ -123,20 +123,20 @@ fn parse_action_vars() {
   rst (dynamic-macro-record-stop-truncate $one)
   stm (setmouse $one $two)
 )
-(dofsrc a b c d)
-(doflayer base $chord1 $chord2 $chr @tdl)
-(dofoverrides
+(defsrc a b c d)
+(deflayer base $chord1 $chord2 $chr @tdl)
+(defoverrides
   ($two) ($one)
   ($one) $four
   $five ($two)
   $four $five
 )
-(doffakekeys
+(deffakekeys
   $one $two
 )
-(dofseq $one $three)
-(dofchords $e $one $1 $two)
-(dofchords $e2 $one ($one) $two)
+(defseq $one $three)
+(defchords $e $one $1 $two)
+(defchords $e2 $one ($one) $two)
 "#;
     s.cfg_text = source.into();
     parse_cfg_raw_string(source.into(), &mut s)
