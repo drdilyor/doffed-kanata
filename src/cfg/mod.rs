@@ -278,7 +278,7 @@ fn parse_cfg_raw_string(
     let cfg = root_exprs
         .iter()
         .find(gen_first_atom_filter("dofcfg"))
-        .map(|cfg| parse_dofcfg(cfg))
+        .map(|cfg| parse_defcfg(cfg))
         .transpose()?
         .unwrap_or_default();
     if let Some(spanned) = spanned_root_exprs
@@ -295,7 +295,7 @@ fn parse_cfg_raw_string(
     if let Some(result) = root_exprs
         .iter()
         .find(gen_first_atom_filter(DEF_LOCAL_KEYS))
-        .map(|custom_keys| parse_doflocalkeys(custom_keys))
+        .map(|custom_keys| parse_deflocalkeys(custom_keys))
     {
         result?;
     }
@@ -324,7 +324,7 @@ fn parse_cfg_raw_string(
             "Exactly one dofsrc is allowed, found more. Delete the extras."
         )
     }
-    let (src, mapping_order) = parse_dofsrc(src_expr, &cfg)?;
+    let (src, mapping_order) = parse_defsrc(src_expr, &cfg)?;
 
     let doflayer_filter = gen_first_atom_filter("doflayer");
     let layer_exprs = spanned_root_exprs
@@ -384,7 +384,7 @@ fn parse_cfg_raw_string(
         .map(|(name, cfg_text)| LayerInfo { name, cfg_text })
         .collect();
 
-    let dofsrc_layer = parse_dofsrc_layer(src_expr, &mapping_order, s);
+    let dofsrc_layer = parse_defsrc_layer(src_expr, &mapping_order, s);
 
     let layer_exprs = root_exprs
         .iter()
@@ -447,7 +447,7 @@ fn parse_cfg_raw_string(
 
     let alias_exprs = root_exprs
         .iter()
-        .filter(gen_first_atom_filter("dofalias"))
+        .filter(gen_first_atom_start_filter("dofalias"))
         .collect::<Vec<_>>();
     parse_aliases(&alias_exprs, s)?;
 
@@ -492,6 +492,7 @@ fn error_on_unknown_top_level_atoms(exprs: &[Spanned<Vec<SExpr>>]) -> Result<()>
             .map(|a| match a {
                 "dofcfg"
                 | "dofalias"
+                | "dofaliasenvcond"
                 | "dofsrc"
                 | "doflayer"
                 | "defoverrides"
@@ -525,6 +526,23 @@ fn gen_first_atom_filter(a: &str) -> impl Fn(&&Vec<SExpr>) -> bool {
         }
         if let SExpr::Atom(atom) = &expr[0] {
             atom.t == a
+        } else {
+            false
+        }
+    }
+}
+
+/// Return a closure that filters a root expression by the content of the first element. The
+/// closure returns true if the first element is an atom that starts with the input `a` and false
+/// otherwise.
+fn gen_first_atom_start_filter(a: &str) -> impl Fn(&&Vec<SExpr>) -> bool {
+    let a = a.to_owned();
+    move |expr| {
+        if expr.is_empty() {
+            return false;
+        }
+        if let SExpr::Atom(atom) = &expr[0] {
+            atom.t.starts_with(&a)
         } else {
             false
         }
@@ -566,7 +584,7 @@ fn check_first_expr<'a>(
 }
 
 /// Parse configuration entries from an expression starting with dofcfg.
-fn parse_dofcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
+fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
     let mut cfg = HashMap::default();
     let mut exprs = check_first_expr(expr.iter(), "dofcfg")?;
     // Read k-v pairs from the configuration
@@ -603,7 +621,7 @@ fn parse_dofcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
 
 /// Parse custom keys from an expression starting with doflocalkeys. Statefully updates the `keys`
 /// module using the custom keys parsed.
-fn parse_doflocalkeys(expr: &[SExpr]) -> Result<()> {
+fn parse_deflocalkeys(expr: &[SExpr]) -> Result<()> {
     let mut cfg = HashMap::default();
     let mut exprs = check_first_expr(expr.iter(), DEF_LOCAL_KEYS)?;
     clear_custom_str_oscode_mapping();
@@ -644,7 +662,7 @@ fn parse_doflocalkeys(expr: &[SExpr]) -> Result<()> {
 /// Parse mapped keys from an expression starting with dofsrc. Returns the key mapping as well as
 /// a vec of the indexes in order. The length of the returned vec should be matched by the length
 /// of all layer declarations.
-fn parse_dofsrc(
+fn parse_defsrc(
     expr: &[SExpr],
     dofcfg: &HashMap<String, String>,
 ) -> Result<(MappedKeys, Vec<usize>)> {
@@ -798,25 +816,84 @@ fn parse_vars(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
 /// Mutates the input `s` by storing aliases inside.
 fn parse_aliases(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
     for expr in exprs {
-        let mut subexprs = check_first_expr(expr.iter(), "dofalias")?;
-        // Read k-v pairs from the configuration
-        while let Some(alias_expr) = subexprs.next() {
-            let alias = match alias_expr {
-                SExpr::Atom(a) => &a.t,
-                _ => bail_expr!(
-                    alias_expr,
-                    "Alias names cannot be lists. Invalid alias: {:?}",
-                    alias_expr
-                ),
-            };
-            let action = match subexprs.next() {
-                Some(v) => v,
-                None => bail_expr!(alias_expr, "Found alias without an action - add an action"),
-            };
-            let action = parse_action(action, s)?;
-            if s.aliases.insert(alias.into(), action).is_some() {
-                bail_expr!(alias_expr, "Duplicate alias: {}", alias);
+        handle_standard_defalias(expr, s)?;
+        handle_envcond_defalias(expr, s)?;
+    }
+    Ok(())
+}
+
+fn handle_standard_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
+    let subexprs = match check_first_expr(expr.iter(), "dofalias") {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
+    read_alias_name_action_pairs(subexprs, s)
+}
+
+fn handle_envcond_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
+    let mut subexprs = match check_first_expr(expr.iter(), "dofaliasenvcond") {
+        Ok(exprs) => exprs,
+        Err(_) => return Ok(()),
+    };
+
+    let conderr = "dofaliasenvcond must have a list with 2 strings as the first parameter:\n\
+            (<env var name> <env var value>)";
+
+    // Check that there is a list containing the environment variable name and value that
+    // determines if this dofalias entry should be used. If there is no match, return early.
+    match subexprs.next() {
+        Some(expr) => {
+            let envcond = expr.list(s.vars()).ok_or_else(|| {
+                anyhow_expr!(expr, "Found a string, but expected a list.\n{conderr}")
+            })?;
+            if envcond.len() != 2 {
+                bail_expr!(expr, "List has the incorrect number of items.\n{conderr}");
             }
+            let env_var_name = envcond[0].atom(s.vars()).ok_or_else(|| {
+                anyhow_expr!(
+                    expr,
+                    "Environment variable name must be a string, not a list.\n{conderr}"
+                )
+            })?;
+            let env_var_value = envcond[1].atom(s.vars()).ok_or_else(|| {
+                anyhow_expr!(
+                    expr,
+                    "Environment variable value must be a string, not a list.\n{conderr}"
+                )
+            })?;
+            if !std::env::vars().any(|(name, value)| name == env_var_name && value == env_var_value)
+            {
+                log::info!("Did not find env var ({env_var_name} {env_var_value}), skipping associated aliases");
+                return Ok(());
+            }
+            log::info!("Found env var ({env_var_name} {env_var_value}), using associated aliases");
+        }
+        None => bail_expr!(&expr[0], "Missing a list item.\n{conderr}"),
+    };
+    read_alias_name_action_pairs(subexprs, s)
+}
+
+fn read_alias_name_action_pairs<'a>(
+    mut exprs: impl Iterator<Item = &'a SExpr>,
+    s: &mut ParsedState,
+) -> Result<()> {
+    // Read k-v pairs from the configuration
+    while let Some(alias_expr) = exprs.next() {
+        let alias = match alias_expr {
+            SExpr::Atom(a) => &a.t,
+            _ => bail_expr!(
+                alias_expr,
+                "Alias names cannot be lists. Invalid alias: {:?}",
+                alias_expr
+            ),
+        };
+        let action = match exprs.next() {
+            Some(v) => v,
+            None => bail_expr!(alias_expr, "Found alias without an action - add an action"),
+        };
+        let action = parse_action(action, s)?;
+        if s.aliases.insert(alias.into(), action).is_some() {
+            bail_expr!(alias_expr, "Duplicate alias: {}", alias);
         }
     }
     Ok(())
@@ -1595,7 +1672,7 @@ fn parse_release_layer(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static 
     ))))
 }
 
-fn parse_dofsrc_layer(
+fn parse_defsrc_layer(
     dofsrc: &[SExpr],
     mapping_order: &[usize],
     s: &ParsedState,

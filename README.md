@@ -6,11 +6,12 @@
 <h1 align="center">Doffed Kanata</h1>
 
 Replaces all of the following with dof-alternative:
-- `defcfg`
+- `dofcfg`
 - `defsrc`
 - `deflocal*`
 - `deflayer`
 - `defalias`
+- `defaliasenvcond`
 - `defvar`
 - `defseq`
 - `deffakekeys`
