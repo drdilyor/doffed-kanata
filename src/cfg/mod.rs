@@ -170,7 +170,7 @@ pub struct Cfg {
     pub layout: KanataLayout,
     /// Sequences defined in `dofseq`.
     pub sequences: KeySeqsToFKeys,
-    /// Overrides defined in `defoverrides`.
+    /// Overrides defined in `dofoverrides`.
     pub overrides: Overrides,
 }
 
@@ -457,7 +457,7 @@ fn parse_cfg_raw_string(
 
     let override_exprs = root_exprs
         .iter()
-        .filter(gen_first_atom_filter("defoverrides"))
+        .filter(gen_first_atom_filter("dofoverrides"))
         .collect::<Vec<_>>();
     let overrides = match override_exprs.len() {
         0 => Overrides::new(&[]),
@@ -465,12 +465,12 @@ fn parse_cfg_raw_string(
         _ => {
             let spanned = spanned_root_exprs
                 .iter()
-                .filter(gen_first_atom_filter_spanned("defoverrides"))
+                .filter(gen_first_atom_filter_spanned("dofoverrides"))
                 .nth(1)
                 .expect("> 2 overrides");
             bail_span!(
                 spanned,
-                "Only one defoverrides allowed, found more. Delete the extras."
+                "Only one dofoverrides allowed, found more. Delete the extras."
             )
         }
     };
@@ -495,7 +495,7 @@ fn error_on_unknown_top_level_atoms(exprs: &[Spanned<Vec<SExpr>>]) -> Result<()>
                 | "dofaliasenvcond"
                 | "dofsrc"
                 | "doflayer"
-                | "defoverrides"
+                | "dofoverrides"
                 | "doflocalkeys-linux"
                 | "doflocalkeys-win"
                 | "doflocalkeys-wintercept"
@@ -2304,8 +2304,8 @@ fn parse_arbitrary_code(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static
 
 fn parse_overrides(exprs: &[SExpr], s: &ParsedState) -> Result<Overrides> {
     const ERR_MSG: &str =
-        "defoverrides expects pairs of parameters: <input key list> <output key list>";
-    let mut subexprs = check_first_expr(exprs.iter(), "defoverrides")?;
+        "dofoverrides expects pairs of parameters: <input key list> <output key list>";
+    let mut subexprs = check_first_expr(exprs.iter(), "dofoverrides")?;
 
     let mut overrides = Vec::<Override>::new();
     while let Some(in_keys_expr) = subexprs.next() {

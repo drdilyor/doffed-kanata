@@ -125,7 +125,7 @@ fn parse_action_vars() {
 )
 (dofsrc a b c d)
 (doflayer base $chord1 $chord2 $chr @tdl)
-(defoverrides
+(dofoverrides
   ($two) ($one)
   ($one) $four
   $five ($two)

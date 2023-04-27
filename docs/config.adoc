@@ -1491,7 +1491,7 @@ SendInput.
 == Global overrides
 <<table-of-contents,Back to ToC>>
 
-The `defoverrides` optional configuration item allows you to create global
+The `dofoverrides` optional configuration item allows you to create global
 key overrides, irrespective of what actions are used to generate those keys.
 It accepts pairs of lists:
 
@@ -1501,13 +1501,13 @@ It accepts pairs of lists:
 Both input and output lists accept 0 or more modifier keys (e.g. lctl, rsft)
 and exactly 1 non-modifier key (e.g. 1, bspc).
 
-Only zero or one `defoverrides` is allowed in a configuration file.
+Only zero or one `dofoverrides` is allowed in a configuration file.
 
 .Example:
 [source]
 ----
 ;; Swap numbers and their symbols with respect to shift
-(defoverrides
+(dofoverrides
   (1) (lsft 1)
   (2) (lsft 2)
   ;; repeat for all remaining numbers
