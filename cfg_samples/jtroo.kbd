@@ -1,4 +1,4 @@
-(dofsrc
+(defsrc
   grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -6,7 +6,7 @@
   lctl lmet lalt           spc            ralt rmet rctl
 )
 
-(dofalias
+(defalias
   ;; toggle layer aliases
   num (layer-toggle numbers)
   chr (layer-toggle chords)
@@ -35,11 +35,11 @@
   csc C-S-c
 )
 
-(doflocalkeys-linux
+(deflocalkeys-linux
   pho 445
 )
 
-(dofalias
+(defalias
   ;; shifted keys
   { S-[
   } S-]
@@ -47,12 +47,12 @@
   ral (tap-hold-release 200 200 sldr ralt)
 )
 
-(dofalias
+(defalias
   alp (multi a b c d e f g h i j k l m n o p q r s t u v w x y z)
   ls (macro l s spc min a l ret)
 )
 
-(doflayer dvorak
+(deflayer dvorak
   @grl 1    2    3    4    5    6    7    8    9    0    [    ]    bspc
   tab  '    ,    @.ms p    y    f    g    c    r    l    /    =    \
   @cap @anm @oar @ech @umc i    d    h    t    n    s    -    ret
@@ -60,7 +60,7 @@
   lctl lmet lalt           spc            @ral rmet rctl
 )
 
-(doflayer qwerty
+(deflayer qwerty
   @grl 1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -68,7 +68,7 @@
   lctl lmet lalt           spc            ralt rmet rctl
 )
 
-(doflayer layers
+(deflayer layers
   _    @qwr @dvk lrld _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _
@@ -76,7 +76,7 @@
   _    _    _              _              _    _    _
 )
 
-(doflayer numbers
+(deflayer numbers
   _    _    _    _    _    _    nlk  kp7  kp8  kp9  _    _    _    _
   _    _    C-S-tab C-tab _ XX  _    kp4  kp5  kp6  min  _    _    _
   _    _    C-z  C-y  M-tab XX  _    kp1  kp2  kp3  +    _    _
@@ -84,7 +84,7 @@
   _    _    _              _              _    _    _
 )
 
-(doflayer misc
+(deflayer misc
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    ins  @{   @}    [   ]    _    _    _
   _    _    _    _    C-u  _    C-bspc bspc esc ret _    _    _
@@ -92,7 +92,7 @@
   _    _    _              _              _    _    _
 )
 
-(doflayer chords
+(deflayer chords
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    @csc _    @ls  _    _    _
   _    @alp _    _    C-u  _    C-d  _    S-;  _    C-s  _    _
@@ -100,7 +100,7 @@
   _    _    _              _              _    _    _
 )
 
-(doflayer arrows
+(deflayer arrows
   _    f1   f2   f3   f4   f5   f6   f7   f8   f9   f10  f11  f12  _
   _    _    _    _    _    _    C-S-tab pgup up pgdn C-tab _  _    _
   _    _    _    _    _    _    home left down rght end  _    _
@@ -108,14 +108,14 @@
   _    _    _              _              _    _    _
 )
 
-(dofalias
+(defalias
   mwu (mwheel-up 50 120)
   mwd (mwheel-down 50 120)
   mwl (mwheel-left 50 120)
   mwr (mwheel-right 50 120)
 )
 
-(doflayer mouse
+(deflayer mouse
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    @mwu bck  _    fwd  _    _    _    _    _    _    _    _    _
   _    @mwd mlft _    mrgt mmid _    _    _    _    _    _    _
@@ -123,7 +123,7 @@
   _    _    _              _              _    _    _
 )
 
-(dofseq "git status" (g s t)
+(defseq "git status" (g s t)
   "git commit --amend --no-edit" (g c a)
   "git rebase -i HEAD~" (g r e b)
   "git log --pretty=oneline --abbrev-commit" (g l s)
@@ -133,7 +133,7 @@
   "git commit -m 'fix_this_commit_message'" (g c m)
 )
 
-(doffakekeys
+(deffakekeys
   "git status" (macro g i t spc s t a t u s)
   "git commit --amend --no-edit" (macro g i t spc c o m m i t spc min min a m e n d spc min min n o min e d i t)
   "git rebase -i HEAD~" (macro g i t spc r e b a s e spc min i spc S-h S-e S-a S-d S-grv)

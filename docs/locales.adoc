@@ -8,7 +8,7 @@ toc::[]
 
 == ISO German QWERTZ - Windows (non-interception)
 
-=== Using `doflocalkeys-win`:
+=== Using `deflocalkeys-win`:
 
 [%collapsible]
 ====
@@ -25,7 +25,7 @@ toc::[]
   <    226
 )
 
-(dofsrc
+(defsrc
   ^         1    2    3    4    5    6    7    8    9    0    ß    ´    bspc
   tab       q    w    e    r    t    z    u    i    o    p    ü    +
   caps      a    s    d    f    g    h    j    k    l    ö    ä    #    ret
@@ -35,12 +35,12 @@ toc::[]
 ----
 ====
 
-=== Without using `doflocalkeys`:
+=== Without using `deflocalkeys`:
 
 [%collapsible]
 ====
 ----
-(dofsrc
+(defsrc
   \         1    2    3    4    5    6    7    8    9    0    [    ]    bspc
   tab       q    w    e    r    t    z    u    i    o    p    ;    =
   caps      a    s    d    f    g    h    j    k    l    grv  '    /    ret
@@ -55,7 +55,7 @@ toc::[]
 [%collapsible]
 ====
 ----
-(dofalias
+(defalias
   ;; shifted german keys
   ! S-1
   ˝ S-2  ;; unicode 02DD ˝ look-a-like is used because @" is no valid alias, to be displayed correctly

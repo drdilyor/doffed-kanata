@@ -30,9 +30,9 @@ also hopefully have helpful error messages in case something goes wrong.
 If you need help, you are welcome to ask.
 |#
 
-;; One dofcfg entry may be added if desired. This is used for configuration
+;; One defcfg entry may be added if desired. This is used for configuration
 ;; key-value pairs that change kanata's behaviour at a global level.
-(dofcfg
+(defcfg
   ;; Your keyboard device will likely differ from this. I believe /dev/input/by-id/
   ;; is preferable; I recall reading that it's less likely to change names on you,
   ;; but I didn't find any keyboard device in there in my VM. If you are on Linux
@@ -53,7 +53,7 @@ If you need help, you are welcome to ask.
   ;; linux-continue-if-no-devs-found yes
 
   ;; Windows doesn't need any input/output configuration entries; however, there
-  ;; must still be a dofcfg entry.
+  ;; must still be a defcfg entry.
   ;;
   ;; There is an optional configuration entry for Windows to help mitigate strange
   ;; behaviour of AltGr if your layout uses that. Uncomment one of the items below
@@ -64,7 +64,7 @@ If you need help, you are welcome to ask.
   ;; windows-altgr cancel-lctl-press ;; remove the lctl press that comes as a combo with ralt
   ;; windows-altgr add-lctl-release  ;; add an lctl release when ralt is released
   ;;
-  ;; NOTE: even with these workarounds, putting lctl+ralt in your dofsrc may
+  ;; NOTE: even with these workarounds, putting lctl+ralt in your defsrc may
   ;; not work too well with other applications that use WH_KEYBOARD_LL.
   ;; Known applications with issues: GWSL/VcXsrv
 
@@ -79,10 +79,10 @@ If you need help, you are welcome to ask.
   ;;
   ;; danger-enable-cmd yes
 
-  ;; Optional configuration: enable processing of keys that are not in dofsrc.
-  ;; This is useful if you are only mapping a few keys in dofsrc instead of
+  ;; Optional configuration: enable processing of keys that are not in defsrc.
+  ;; This is useful if you are only mapping a few keys in defsrc instead of
   ;; most of the keys on your keyboard. Without this, the tap-hold-release and
-  ;; tap-hold-press actions will not activate for keys that are not in dofsrc.
+  ;; tap-hold-press actions will not activate for keys that are not in defsrc.
   ;;
   ;; The reason this is not enabled by default is because some keys may not
   ;; work correctly if they are intercepted. E.g. rctl/altgr on Windows; see the
@@ -96,27 +96,27 @@ If you need help, you are welcome to ask.
   ;; works with the Interception driver.
   ;;
   ;; To know what numbers to put into the string, you can run the
-  ;; kanata-wintercept variant with this dofcfg item defined with random numbers.
+  ;; kanata-wintercept variant with this defcfg item defined with random numbers.
   ;; Then when a button is first pressed on the mouse device, kanata will print
   ;; its hwid in the log; you can then copy-paste that into this configuration
-  ;; entry. If this dofcfg item is not defined, the log will not print.
+  ;; entry. If this defcfg item is not defined, the log will not print.
   ;;
   ;; windows-interception-mouse-hwid "70, 0, 90, 0, 20"
 )
 
-;; doflocalkeys-* enables you to define and use key names that match your locale
+;; deflocalkeys-* enables you to define and use key names that match your locale
 ;; by defining OS code number mappings for that character.
 ;;
-;; There are three variants of doflocalkeys-*:
-;; - doflocalkeys-win
-;; - doflocalkeys-wintercept
-;; - doflocalkeys-linux
+;; There are three variants of deflocalkeys-*:
+;; - deflocalkeys-win
+;; - deflocalkeys-wintercept
+;; - deflocalkeys-linux
 ;;
-;; Only one of each doflocalkeys-* variant is allowed. The variants that are
-;; not applicable will be ignored, e.g. doflocalkeys-linux and doflocalkeys-wintercept
+;; Only one of each deflocalkeys-* variant is allowed. The variants that are
+;; not applicable will be ignored, e.g. deflocalkeys-linux and deflocalkeys-wintercept
 ;; are both ignored when using the default Windows kanata binary.
 ;;
-;; The configuration item is parsed similarly to dofcfg; it is composed of
+;; The configuration item is parsed similarly to defcfg; it is composed of
 ;; pairs of keys and values.
 ;;
 ;; You can check docs/locales.adoc for the mapping for your locale. If your
@@ -133,23 +133,23 @@ If you need help, you are welcome to ask.
 ;;
 ;; Web link or config: https://github.com/jtroo/kanata/blob/main/docs/config.adoc
 
-(doflocalkeys-win
+(deflocalkeys-win
   ì 187
 )
 
-(doflocalkeys-wintercept
+(deflocalkeys-wintercept
   ì 187
 )
 
-(doflocalkeys-linux
+(deflocalkeys-linux
   ì 13
 )
 
-;; Only one dofsrc is allowed.
+;; Only one defsrc is allowed.
 ;;
-;; dofsrc defines the keys that will be intercepted by kanata. The order of the
-;; keys matches the doflayer declarations and all doflayer declarations must
-;; have the same number of keys as dofsrc.
+;; defsrc defines the keys that will be intercepted by kanata. The order of the
+;; keys matches the deflayer declarations and all deflayer declarations must
+;; have the same number of keys as defsrc.
 ;;
 ;; The visual/spatial positioning is *not* mandatory; it is done by convention
 ;; for visual ease. These items are parsed as a long list with newlines being
@@ -157,7 +157,7 @@ If you need help, you are welcome to ask.
 ;;
 ;; If you are looking for other keys, the file src/keys/mod.rs should hopefully
 ;; provide some insight.
-(dofsrc
+(defsrc
   grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -170,7 +170,7 @@ If you need help, you are welcome to ask.
 ;; backtick/grave key (@grl) which is an alias for a tap-hold key.
 ;;
 ;; There are currently a maximum of 25 layers allowed.
-(doflayer qwerty
+(deflayer qwerty
   @grl 1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
   caps a    s    d    f    g    h    j    k    l    ;    '    ret
@@ -180,7 +180,7 @@ If you need help, you are welcome to ask.
 
 ;; The dvorak layer remaps the keys to the dvorak layout. There are several
 ;; tap-hold aliases configured on the left side.
-(doflayer dvorak
+(deflayer dvorak
   @grl 1    2    3    4    5    6    7    8    9    0    [    ]    bspc
   tab  '    ,    @.ms p    y    f    g    c    r    l    /    =    \
   @cap @anm @oar @ech @umc @ifk d    h    t    n    s    -    ret
@@ -188,27 +188,27 @@ If you need help, you are welcome to ask.
   lctl lmet lalt           spc           @ralt rmet @rcl
 )
 
-;; dofvar can be used to declare commonly-used values
-(dofvar
+;; defvar can be used to declare commonly-used values
+(defvar
   tap-timeout   100
   hold-timeout  200
   tt $tap-timeout
   ht $hold-timeout
 )
 
-(dofalias
+(defalias
   th1 (tap-hold $tt $ht caps lctl)
   th2 (tap-hold $tt $ht spc lsft)
 )
 
-;; dofalias is used to declare a shortcut for a more complicated action to keep
-;; the doflayer declarations clean and aligned. The alignment in doflayers is not
+;; defalias is used to declare a shortcut for a more complicated action to keep
+;; the deflayer declarations clean and aligned. The alignment in deflayers is not
 ;; necessary, but is strongly recommended for ease of understanding visually.
 ;;
 ;; Aliases are referred to by `@<alias_name>`. Aliases can refer to each other,
 ;; e.g. in the `anm` alias. However, an alias can only refer to another alias
 ;; that has been defined before it in the file.
-(dofalias
+(defalias
   ;; aliases to change the base layer to qwerty or dvorak
   dvk (layer-switch dvorak)
   qwr (layer-switch qwerty)
@@ -294,21 +294,21 @@ If you need help, you are welcome to ask.
   ralt (multi ralt (layer-toggle ralted))
 )
 
-;; The dofaliasenvcond variant of dofalias is parsed similarly, but there must
+;; The defaliasenvcond variant of defalias is parsed similarly, but there must
 ;; be a list parameter first. The list must contain two strings. In order,
 ;; these strings are: an environment variable name, and the environment
 ;; variable value. When the environment variable defined by name has the
 ;; corresponding value when running kanata, the aliases within will be active.
 ;; Otherwise, the aliases will be skipped.
-(dofaliasenvcond (LAPTOP lp1)
+(defaliasenvcond (LAPTOP lp1)
   met @lp1met
 )
 
-(dofaliasenvcond (LAPTOP lp2)
+(defaliasenvcond (LAPTOP lp2)
   met @lp2met
 )
 
-(dofalias
+(defalias
   ;; shifted keys
   { S-[
   } S-]
@@ -319,7 +319,7 @@ If you need help, you are welcome to ask.
   0 0
 )
 
-(dofalias
+(defalias
   ;; For the multi action, all keys are pressed for the whole sequence
   ;; but still in the listed order which may be undesirable, particularly
   ;; for modifiers like shift. You probably want to use macro instead.
@@ -378,7 +378,7 @@ If you need help, you are welcome to ask.
 
   ;; unicode accepts a single unicode character. The unicode character will
   ;; not be automatically repeated by holding the key down. The alias name
-  ;; is the unicode character itself and is referenced by @🙁 in doflayer.
+  ;; is the unicode character itself and is referenced by @🙁 in deflayer.
   🙁 (unicode 🙁)
 
   ;; fork accepts two actions and a key list. The first (left) action will
@@ -404,7 +404,7 @@ If you need help, you are welcome to ask.
 
 ;; The underscore _ means transparent. The key on the base layer will be used
 ;; instead. XX means no-op. The key will do nothing.
-(doflayer numbers
+(deflayer numbers
   _    _    _    _    _    _    nlk  kp7  kp8  kp9  _    _    _    _
   _    _    _    _    _    XX   _    kp4  kp5  kp6  -    _    _    _
   _    _    C-z  _    _    XX   _    kp1  kp2  kp3  +    _    _
@@ -421,7 +421,7 @@ If you need help, you are welcome to ask.
 ;; Upon a successful reload, the kanata state will begin on the default base layer
 ;; in the configuration. E.g. in this example configuration, you would start on
 ;; the qwerty layer.
-(doflayer layers
+(deflayer layers
   _    @qwr @dvk lrld lrpv lrnx _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _
@@ -429,7 +429,7 @@ If you need help, you are welcome to ask.
   _    _    _              _              _    _    _
 )
 
-(dofalias
+(defalias
 
   ;; Alias for one-shot which will activate an action until either the timeout
   ;; expires or a different key is pressed. The timeout is the first parameter
@@ -493,7 +493,7 @@ If you need help, you are welcome to ask.
   ab1 (arbitrary-code 700)
 )
 
-(dofalias
+(defalias
   ;; caps-word will add an lsft to the active key list for all alphanumeric keys
   ;; a-z, and the US layout minus key; meaning it will be converted to an
   ;; underscore.
@@ -524,7 +524,7 @@ If you need help, you are welcome to ask.
 ;; pressed key. Holding down the `rpt` key will not repeatedly send the key.
 ;; The intended use case is to be able to use a different finger to repeat a
 ;; double letter, as opposed to double-tapping a letter.
-(doflayer misc
+(deflayer misc
   _    _    _    _    _    _    _    _    _    @é   @è   _    ì #|random custom key for testing|#   _
   _    _    @ab1 _    _    _    ins  @{   @}   [    ]    _    _    +
   @cw  _    _    _    C-u  _    del  bspc esc  ret  _    _    _
@@ -533,7 +533,7 @@ If you need help, you are welcome to ask.
 )
 
 
-(doflayer chords      ;; you can put list actions directly in doflayer but it's ugly, so prefer aliases.
+(deflayer chords      ;; you can put list actions directly in deflayer but it's ugly, so prefer aliases.
   _    _    _    _    _    _    _    _    _    _    @🙁  (unicode 😀) _    _
   _    _    _    _    _    _    _    _    @csc @hpy @lch @tbm         _    _
   _    @alp _    _    _    _    _    @ch1 @ch2 @ch4 @ch8 _            _
@@ -541,7 +541,7 @@ If you need help, you are welcome to ask.
   _    _    _              _              _    _    _
 )
 
-(doflayer arrows
+(deflayer arrows
   _    f1   f2   f3   f4   f5   f6   f7   f8   f9   f10  f11  f12  _
   _    _    _    _    _    _    _    pgup up   pgdn _    _    _    _
   _    _    _    _    _    _    home left down rght end  _    _
@@ -571,7 +571,7 @@ If you need help, you are welcome to ask.
 ;;
 ;; One can also see mouse movement actions at the lower right side, with the
 ;; arrow unicode characters.
-(doflayer mouse
+(deflayer mouse
   _    @mwu @mwd @mwl @mwr _    _    _    _    _    @ma↑ _    _    _
   _    pgup bck  _    fwd  _    _    _    _    @ma← @ma↓ @ma→ _    _
   _    pgdn mlft _    mrgt mmid _    mbck mfwd _    @ms↑ _    _
@@ -579,7 +579,7 @@ If you need help, you are welcome to ask.
   _    _    _              _              _    _    _
 )
 
-(dofalias
+(defalias
   ;; Mouse wheel actions. The first number is the interval in milliseconds
   ;; between scroll actions. The second number is the distance in some arbitrary
   ;; unit. Play with the parameters to see what feels correct. Both numbers
@@ -628,7 +628,7 @@ If you need help, you are welcome to ask.
   sm (setmouse 32228 32228)
 )
 
-(dofalias
+(defalias
   lft (multi (release-key ralt) left) ;; release ralt if held and also press left
   rgt (multi (release-key ralt) rght) ;; release ralt if held and also press rght
   rlr (release-layer ralted)          ;; release layer-toggle of ralted
@@ -643,7 +643,7 @@ If you need help, you are welcome to ask.
 ;;
 ;; E.g. ralt+@lft will result in only left being pressed instead of ralt+left,
 ;; while ralt(hold)+tab+tab+tab still works as intended.
-(doflayer ralted
+(deflayer ralted
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    @lft @rlr @rgt _    _    _
@@ -658,15 +658,15 @@ If you need help, you are welcome to ask.
 ;; purpose of fake keys is for a use case such as holding modifier keys for
 ;; any number of keypresses and then releasing the modifiers when desired.
 ;;
-;; The actions associated with fake keys in doffakekeys are parsed before
-;; aliases, so you can't use aliases within doffakekeys. Other than the lack
+;; The actions associated with fake keys in deffakekeys are parsed before
+;; aliases, so you can't use aliases within deffakekeys. Other than the lack
 ;; of alias support, fake keys can do any action that a normal key can,
 ;; including doing operations on previously defined fake keys.
 ;;
 ;; Operations on fake keys can occur either on press (on-press-fakekey) or
 ;; on release (on-release-fakekey). The use cases for the on-release variant
 ;; are left up to your own creativity.
-(doflayer fakekeys
+(deflayer fakekeys
   _    @fcp @fsp @fmp @pal _    _    _    _    _    _    _    _    _
   _    @fcr @fsr @fap @ral _    _    _    _    _    _    _    _    _
   _    @fct @fst @rma _    _    _    _    _    _    _    _    _
@@ -674,7 +674,7 @@ If you need help, you are welcome to ask.
   _    _    _              _              _    _    _
 )
 
-(doffakekeys
+(deffakekeys
   ctl lctl
   sft lsft
   lsft lsft
@@ -695,7 +695,7 @@ If you need help, you are welcome to ask.
       )
 )
 
-(dofalias
+(defalias
   fcp (on-press-fakekey ctl press)
   fcr (on-press-fakekey ctl release)
   fct (on-press-fakekey ctl tap)
@@ -736,7 +736,7 @@ If you need help, you are welcome to ask.
 ;; key and then a sequence of characters.
 ;; See: https://github.com/jtroo/kanata/issues/97
 ;;
-;; You can add an entry to dofcfg to change the sequence timeout (default is 1000):
+;; You can add an entry to defcfg to change the sequence timeout (default is 1000):
 ;;     sequence-timeout <number(ms)>
 ;;
 ;; There is also an option to customize the key sequence input mode. Its default
@@ -759,9 +759,9 @@ If you need help, you are welcome to ask.
 ;;
 ;; Example:
 ;;     sequence-input-mode visible-backspaced
-(dofseq git-status (g s t))
-(doffakekeys git-status (macro g i t spc s t a t u s))
-(dofalias rcl (tap-hold-release 200 200 sldr rctl))
+(defseq git-status (g s t))
+(deffakekeys git-status (macro g i t spc s t a t u s))
+(defalias rcl (tap-hold-release 200 200 sldr rctl))
 
 ;; Input chording.
 ;;
@@ -771,7 +771,7 @@ If you need help, you are welcome to ask.
 ;; Each combination/chord can perform a different action, allowing you to bind
 ;; up to `2^n - 1` different actions to just `n` keys.
 ;;
-;; Each `dofchords` defines a named group of such chord-action pairs.
+;; Each `defchords` defines a named group of such chord-action pairs.
 ;; The 500 is a timeout after which a chord triggers if it isn't triggered by a
 ;; key release or press of a non-chord key before the timeout expires.
 ;; If a chord is not defined, no action will occur when it is triggered but the
@@ -783,7 +783,7 @@ If you need help, you are welcome to ask.
 ;; Note that these keys do not directly correspond to real keys and are merely
 ;; arbitrary labels that make sense within the context of the chord.
 ;; They are mapped to real keys in layers by configuring the key in the layer to
-;; map to a `(chord name key)` action (like those in the `dofalias` below) where
+;; map to a `(chord name key)` action (like those in the `defalias` below) where
 ;; `name` is the name of the chords group (here `binary`) and `key` is one of the
 ;; arbitrary labels of the keys in a chord (here `1`, `2`, `4` and `8`).
 ;;
@@ -800,7 +800,7 @@ If you need help, you are welcome to ask.
 ;; The action executed by a chord (the right side of the chord-action pairs) may
 ;; be any regular or advanced action, including aliases. They currently cannot
 ;; however contain a `chord` action.
-(dofchords binary 500
+(defchords binary 500
   (1      ) 1
   (  2    ) 2
   (1 2    ) 3
@@ -817,7 +817,7 @@ If you need help, you are welcome to ask.
   (  2 4 8) (multi 1 4)
   (1 2 4 8) (multi 1 5)
 )
-(dofalias
+(defalias
   ch1 (chord binary 1)
   ch2 (chord binary 2)
   ch4 (chord binary 4)
