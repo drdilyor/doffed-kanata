@@ -5,17 +5,17 @@
 //!
 //! If the mapped keys are defined as:
 //!
-//!     (defsrc
+//!     (dofsrc
 //!         esc  1    2    3    4
 //!     )
 //!
 //! and the layers are:
 //!
-//!     (deflayer one
+//!     (doflayer one
 //!         _   a    s    d    _
 //!     )
 //!
-//!     (deflayer two
+//!     (doflayer two
 //!         _   a    o    e    _
 //!     )
 //!
@@ -28,12 +28,12 @@
 //!     layers[2] = { xx, esc, a, o, e, 4, xx... }
 //!     layers[3] = { xx, _  , a, o, e, _, xx... }
 //!
-//! Note that this example isn't practical, but `(defsrc esc 1 2 3 4)` is used because these keys
+//! Note that this example isn't practical, but `(dofsrc esc 1 2 3 4)` is used because these keys
 //! are at the beginning of the array. The column index for layers is the numerical value of
 //! the key from `keys::OsCode`.
 //!
 //! In addition, there are two versions of each layer. One version delegates transparent entries to
-//! the key defined in defsrc, while the other keeps them as actually transparent. This is to match
+//! the key defined in dofsrc, while the other keeps them as actually transparent. This is to match
 //! the behaviour in kmonad.
 //!
 //! The specific values in example above applies to Linux, but the same logic applies to Windows.
@@ -164,11 +164,11 @@ pub struct Cfg {
     pub key_outputs: KeyOutputs,
     /// Layer info used for printing to the logs.
     pub layer_info: Vec<LayerInfo>,
-    /// Configuration items in `defcfg`.
+    /// Configuration items in `dofcfg`.
     pub items: HashMap<String, String>,
     /// The keyberon layout state machine struct.
     pub layout: KanataLayout,
-    /// Sequences defined in `defseq`.
+    /// Sequences defined in `dofseq`.
     pub sequences: KeySeqsToFKeys,
     /// Overrides defined in `defoverrides`.
     pub overrides: Overrides,
@@ -230,11 +230,11 @@ fn parse_cfg(
 }
 
 #[cfg(all(not(feature = "interception_driver"), target_os = "windows"))]
-const DEF_LOCAL_KEYS: &str = "deflocalkeys-win";
+const DEF_LOCAL_KEYS: &str = "doflocalkeys-win";
 #[cfg(all(feature = "interception_driver", target_os = "windows"))]
-const DEF_LOCAL_KEYS: &str = "deflocalkeys-wintercept";
+const DEF_LOCAL_KEYS: &str = "doflocalkeys-wintercept";
 #[cfg(target_os = "linux")]
-const DEF_LOCAL_KEYS: &str = "deflocalkeys-linux";
+const DEF_LOCAL_KEYS: &str = "doflocalkeys-linux";
 
 #[allow(clippy::type_complexity)] // return type is not pub
 fn parse_cfg_raw(
@@ -277,18 +277,18 @@ fn parse_cfg_raw_string(
 
     let cfg = root_exprs
         .iter()
-        .find(gen_first_atom_filter("defcfg"))
+        .find(gen_first_atom_filter("dofcfg"))
         .map(|cfg| parse_defcfg(cfg))
         .transpose()?
         .unwrap_or_default();
     if let Some(spanned) = spanned_root_exprs
         .iter()
-        .filter(gen_first_atom_filter_spanned("defcfg"))
+        .filter(gen_first_atom_filter_spanned("dofcfg"))
         .nth(1)
     {
         bail_span!(
             spanned,
-            "Only one defcfg is allowed, found more. Delete the extras."
+            "Only one dofcfg is allowed, found more. Delete the extras."
         )
     }
 
@@ -312,33 +312,33 @@ fn parse_cfg_raw_string(
 
     let src_expr = root_exprs
         .iter()
-        .find(gen_first_atom_filter("defsrc"))
-        .ok_or_else(|| anyhow!("Exactly one defsrc must exist; found none"))?;
+        .find(gen_first_atom_filter("dofsrc"))
+        .ok_or_else(|| anyhow!("Exactly one dofsrc must exist; found none"))?;
     if let Some(spanned) = spanned_root_exprs
         .iter()
-        .filter(gen_first_atom_filter_spanned("defsrc"))
+        .filter(gen_first_atom_filter_spanned("dofsrc"))
         .nth(1)
     {
         bail_span!(
             spanned,
-            "Exactly one defsrc is allowed, found more. Delete the extras."
+            "Exactly one dofsrc is allowed, found more. Delete the extras."
         )
     }
     let (src, mapping_order) = parse_defsrc(src_expr, &cfg)?;
 
-    let deflayer_filter = gen_first_atom_filter("deflayer");
+    let doflayer_filter = gen_first_atom_filter("doflayer");
     let layer_exprs = spanned_root_exprs
         .iter()
-        .filter(gen_first_atom_filter_spanned("deflayer"))
+        .filter(gen_first_atom_filter_spanned("doflayer"))
         .cloned()
         .collect::<Vec<_>>();
     if layer_exprs.is_empty() {
-        bail!("No deflayer expressions exist. At least one layer must be defined.")
+        bail!("No doflayer expressions exist. At least one layer must be defined.")
     }
     if layer_exprs.len() > MAX_LAYERS {
         let spanned = spanned_root_exprs
             .iter()
-            .filter(gen_first_atom_filter_spanned("deflayer"))
+            .filter(gen_first_atom_filter_spanned("doflayer"))
             .nth(MAX_LAYERS)
             .expect(">25 layers");
         bail_span!(
@@ -369,7 +369,7 @@ fn parse_cfg_raw_string(
 
     let layer_strings = spanned_root_exprs
         .iter()
-        .filter(|expr| deflayer_filter(&&expr.t))
+        .filter(|expr| doflayer_filter(&&expr.t))
         .map(|expr| text[expr.span].to_string())
         .flat_map(|s| {
             // Duplicate the same layer for `layer_strings` because the keyberon layout itself has
@@ -384,11 +384,11 @@ fn parse_cfg_raw_string(
         .map(|(name, cfg_text)| LayerInfo { name, cfg_text })
         .collect();
 
-    let defsrc_layer = parse_defsrc_layer(src_expr, &mapping_order, s);
+    let dofsrc_layer = parse_defsrc_layer(src_expr, &mapping_order, s);
 
     let layer_exprs = root_exprs
         .iter()
-        .filter(&deflayer_filter)
+        .filter(&doflayer_filter)
         .cloned()
         .collect::<Vec<_>>();
 
@@ -397,7 +397,7 @@ fn parse_cfg_raw_string(
         layer_exprs,
         layer_idxs,
         mapping_order,
-        defsrc_layer,
+        dofsrc_layer,
         cfg_filename: s.cfg_filename.clone(),
         cfg_text: s.cfg_text.clone(),
         is_cmd_enabled: {
@@ -423,31 +423,31 @@ fn parse_cfg_raw_string(
 
     let var_exprs = root_exprs
         .iter()
-        .filter(gen_first_atom_filter("defvar"))
+        .filter(gen_first_atom_filter("dofvar"))
         .collect::<Vec<_>>();
     parse_vars(&var_exprs, s)?;
 
     let chords_exprs = spanned_root_exprs
         .iter()
-        .filter(gen_first_atom_filter_spanned("defchords"))
+        .filter(gen_first_atom_filter_spanned("dofchords"))
         .collect::<Vec<_>>();
     parse_chord_groups(&chords_exprs, s)?;
 
     let fake_keys_exprs = root_exprs
         .iter()
-        .filter(gen_first_atom_filter("deffakekeys"))
+        .filter(gen_first_atom_filter("doffakekeys"))
         .collect::<Vec<_>>();
     parse_fake_keys(&fake_keys_exprs, s)?;
 
     let sequence_exprs = root_exprs
         .iter()
-        .filter(gen_first_atom_filter("defseq"))
+        .filter(gen_first_atom_filter("dofseq"))
         .collect::<Vec<_>>();
     let sequences = parse_sequences(&sequence_exprs, s)?;
 
     let alias_exprs = root_exprs
         .iter()
-        .filter(gen_first_atom_start_filter("defalias"))
+        .filter(gen_first_atom_start_filter("dofalias"))
         .collect::<Vec<_>>();
     parse_aliases(&alias_exprs, s)?;
 
@@ -490,19 +490,19 @@ fn error_on_unknown_top_level_atoms(exprs: &[Spanned<Vec<SExpr>>]) -> Result<()>
             })?
             .atom(None)
             .map(|a| match a {
-                "defcfg"
-                | "defalias"
-                | "defaliasenvcond"
-                | "defsrc"
-                | "deflayer"
+                "dofcfg"
+                | "dofalias"
+                | "dofaliasenvcond"
+                | "dofsrc"
+                | "doflayer"
                 | "defoverrides"
-                | "deflocalkeys-linux"
-                | "deflocalkeys-win"
-                | "deflocalkeys-wintercept"
-                | "deffakekeys"
-                | "defchords"
-                | "defvar"
-                | "defseq" => Ok(()),
+                | "doflocalkeys-linux"
+                | "doflocalkeys-win"
+                | "doflocalkeys-wintercept"
+                | "doffakekeys"
+                | "dofchords"
+                | "dofvar"
+                | "dofseq" => Ok(()),
                 _ => bail_span!(expr, "Found unknown configuration item"),
             })
             .ok_or_else(|| {
@@ -583,10 +583,10 @@ fn check_first_expr<'a>(
     Ok(exprs)
 }
 
-/// Parse configuration entries from an expression starting with defcfg.
+/// Parse configuration entries from an expression starting with dofcfg.
 fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
     let mut cfg = HashMap::default();
-    let mut exprs = check_first_expr(expr.iter(), "defcfg")?;
+    let mut exprs = check_first_expr(expr.iter(), "dofcfg")?;
     // Read k-v pairs from the configuration
     loop {
         let key = match exprs.next() {
@@ -595,7 +595,7 @@ fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
         };
         let val = match exprs.next() {
             Some(v) => v,
-            None => bail_expr!(key, "Found a defcfg key missing a value"),
+            None => bail_expr!(key, "Found a dofcfg key missing a value"),
         };
         match (&key, &val) {
             (SExpr::Atom(k), SExpr::Atom(v)) => {
@@ -606,20 +606,20 @@ fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
                     )
                     .is_some()
                 {
-                    bail_expr!(key, "Duplicate defcfg entry {}", k.t);
+                    bail_expr!(key, "Duplicate dofcfg entry {}", k.t);
                 }
             }
             (SExpr::List(_), _) => {
-                bail_expr!(key, "Lists are not allowed in defcfg");
+                bail_expr!(key, "Lists are not allowed in dofcfg");
             }
             (_, SExpr::List(_)) => {
-                bail_expr!(val, "Lists are not allowed in defcfg");
+                bail_expr!(val, "Lists are not allowed in dofcfg");
             }
         }
     }
 }
 
-/// Parse custom keys from an expression starting with deflocalkeys. Statefully updates the `keys`
+/// Parse custom keys from an expression starting with doflocalkeys. Statefully updates the `keys`
 /// module using the custom keys parsed.
 fn parse_deflocalkeys(expr: &[SExpr]) -> Result<()> {
     let mut cfg = HashMap::default();
@@ -659,31 +659,31 @@ fn parse_deflocalkeys(expr: &[SExpr]) -> Result<()> {
     Ok(())
 }
 
-/// Parse mapped keys from an expression starting with defsrc. Returns the key mapping as well as
+/// Parse mapped keys from an expression starting with dofsrc. Returns the key mapping as well as
 /// a vec of the indexes in order. The length of the returned vec should be matched by the length
 /// of all layer declarations.
 fn parse_defsrc(
     expr: &[SExpr],
-    defcfg: &HashMap<String, String>,
+    dofcfg: &HashMap<String, String>,
 ) -> Result<(MappedKeys, Vec<usize>)> {
-    let exprs = check_first_expr(expr.iter(), "defsrc")?;
+    let exprs = check_first_expr(expr.iter(), "dofsrc")?;
     let mut mkeys = MappedKeys::default();
     let mut ordered_codes = Vec::new();
     for expr in exprs {
         let s = match expr {
             SExpr::Atom(a) => &a.t,
-            _ => bail_expr!(expr, "No lists allowed in defsrc"),
+            _ => bail_expr!(expr, "No lists allowed in dofsrc"),
         };
         let oscode = str_to_oscode(s)
-            .ok_or_else(|| anyhow_expr!(expr, "Unknown key in defsrc: \"{}\"", s))?;
+            .ok_or_else(|| anyhow_expr!(expr, "Unknown key in dofsrc: \"{}\"", s))?;
         if mkeys.contains(&oscode) {
-            bail_expr!(expr, "Repeat declaration of key in defsrc: \"{}\"", s)
+            bail_expr!(expr, "Repeat declaration of key in dofsrc: \"{}\"", s)
         }
         mkeys.insert(oscode);
         ordered_codes.push(oscode.into());
     }
 
-    let process_unmapped_keys = defcfg
+    let process_unmapped_keys = dofcfg
         .get("process-unmapped-keys")
         .map(|text| matches!(text.to_lowercase().as_str(), "true" | "yes"))
         .unwrap_or(false);
@@ -709,23 +709,23 @@ type LayerIndexes = HashMap<String, usize>;
 type Aliases = HashMap<String, &'static KanataAction>;
 
 /// Returns layer names and their indexes into the keyberon layout. This also checks that all
-/// layers have the same number of items as the defsrc.
+/// layers have the same number of items as the dofsrc.
 fn parse_layer_indexes(exprs: &[Spanned<Vec<SExpr>>], expected_len: usize) -> Result<LayerIndexes> {
     let mut layer_indexes = HashMap::default();
     for (i, expr) in exprs.iter().enumerate() {
-        let mut subexprs = check_first_expr(expr.t.iter(), "deflayer")?;
+        let mut subexprs = check_first_expr(expr.t.iter(), "doflayer")?;
         let layer_expr = subexprs.next().ok_or_else(|| {
-            anyhow_span!(expr, "deflayer requires a name and {expected_len} item(s)")
+            anyhow_span!(expr, "doflayer requires a name and {expected_len} item(s)")
         })?;
         let layer_name = layer_expr
             .atom(None)
-            .ok_or_else(|| anyhow_expr!(layer_expr, "layer name after deflayer must be a string"))?
+            .ok_or_else(|| anyhow_expr!(layer_expr, "layer name after doflayer must be a string"))?
             .to_owned();
         let num_actions = subexprs.count();
         if num_actions != expected_len {
             bail_span!(
                 expr,
-                "Layer {} has {} item(s), but requires {} to match defsrc",
+                "Layer {} has {} item(s), but requires {} to match dofsrc",
                 layer_name,
                 num_actions,
                 expected_len
@@ -745,7 +745,7 @@ struct ParsedState {
     mapping_order: Vec<usize>,
     fake_keys: HashMap<String, (usize, &'static KanataAction)>,
     chord_groups: HashMap<String, ChordGroup>,
-    defsrc_layer: [KanataAction; KEYS_IN_ROW],
+    dofsrc_layer: [KanataAction; KEYS_IN_ROW],
     is_cmd_enabled: bool,
     cfg_filename: String,
     cfg_text: String,
@@ -766,7 +766,7 @@ impl Default for ParsedState {
             aliases: Default::default(),
             layer_idxs: Default::default(),
             mapping_order: Default::default(),
-            defsrc_layer: [KanataAction::Trans; KEYS_IN_ROW],
+            dofsrc_layer: [KanataAction::Trans; KEYS_IN_ROW],
             fake_keys: Default::default(),
             chord_groups: Default::default(),
             is_cmd_enabled: false,
@@ -790,7 +790,7 @@ struct ChordGroup {
 
 fn parse_vars(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
     for expr in exprs {
-        let mut subexprs = check_first_expr(expr.iter(), "defvar")?;
+        let mut subexprs = check_first_expr(expr.iter(), "dofvar")?;
         // Read k-v pairs from the configuration
         while let Some(var_name_expr) = subexprs.next() {
             let var_name = match var_name_expr {
@@ -812,7 +812,7 @@ fn parse_vars(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
     Ok(())
 }
 
-/// Parse alias->action mappings from multiple exprs starting with defalias.
+/// Parse alias->action mappings from multiple exprs starting with dofalias.
 /// Mutates the input `s` by storing aliases inside.
 fn parse_aliases(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
     for expr in exprs {
@@ -823,7 +823,7 @@ fn parse_aliases(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
 }
 
 fn handle_standard_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
-    let subexprs = match check_first_expr(expr.iter(), "defalias") {
+    let subexprs = match check_first_expr(expr.iter(), "dofalias") {
         Ok(s) => s,
         Err(_) => return Ok(()),
     };
@@ -831,16 +831,16 @@ fn handle_standard_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
 }
 
 fn handle_envcond_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
-    let mut subexprs = match check_first_expr(expr.iter(), "defaliasenvcond") {
+    let mut subexprs = match check_first_expr(expr.iter(), "dofaliasenvcond") {
         Ok(exprs) => exprs,
         Err(_) => return Ok(()),
     };
 
-    let conderr = "defaliasenvcond must have a list with 2 strings as the first parameter:\n\
+    let conderr = "dofaliasenvcond must have a list with 2 strings as the first parameter:\n\
             (<env var name> <env var value>)";
 
     // Check that there is a list containing the environment variable name and value that
-    // determines if this defalias entry should be used. If there is no match, return early.
+    // determines if this dofalias entry should be used. If there is no match, return early.
     match subexprs.next() {
         Some(expr) => {
             let envcond = expr.list(s.vars()).ok_or_else(|| {
@@ -1125,7 +1125,7 @@ fn layer_idx(ac_params: &[SExpr], layers: &LayerIndexes) -> Result<usize> {
         Some(i) => Ok(*i),
         None => bail_expr!(
             &ac_params[0],
-            "layer name is not declared in any deflayer: {layer_name}"
+            "layer name is not declared in any doflayer: {layer_name}"
         ),
     }
 }
@@ -1673,14 +1673,14 @@ fn parse_release_layer(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static 
 }
 
 fn parse_defsrc_layer(
-    defsrc: &[SExpr],
+    dofsrc: &[SExpr],
     mapping_order: &[usize],
     s: &ParsedState,
 ) -> [KanataAction; KEYS_IN_ROW] {
     let mut layer = [KanataAction::Trans; KEYS_IN_ROW];
 
-    // These can be default (empty) since the defsrc layer definitely won't use it.
-    for (i, ac) in defsrc.iter().skip(1).enumerate() {
+    // These can be default (empty) since the dofsrc layer definitely won't use it.
+    for (i, ac) in dofsrc.iter().skip(1).enumerate() {
         let ac = parse_action(ac, s).expect("prechecked valid key names");
         layer[mapping_order[i]] = *ac;
     }
@@ -1688,9 +1688,9 @@ fn parse_defsrc_layer(
 }
 
 fn parse_chord_groups(exprs: &[&Spanned<Vec<SExpr>>], s: &mut ParsedState) -> Result<()> {
-    const MSG: &str = "Incorrect number of elements found in defchords.\nThere should be the group name, followed by timeout, followed by keys-action pairs";
+    const MSG: &str = "Incorrect number of elements found in dofchords.\nThere should be the group name, followed by timeout, followed by keys-action pairs";
     for expr in exprs {
-        let mut subexprs = check_first_expr(expr.t.iter(), "defchords")?;
+        let mut subexprs = check_first_expr(expr.t.iter(), "dofchords")?;
         let name = subexprs
             .next()
             .and_then(|e| e.atom(s.vars()))
@@ -1947,7 +1947,7 @@ fn fill_chords(
 
 fn parse_fake_keys(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
     for expr in exprs {
-        let mut subexprs = check_first_expr(expr.iter(), "deffakekeys")?;
+        let mut subexprs = check_first_expr(expr.iter(), "doffakekeys")?;
         // Read k-v pairs from the configuration
         while let Some(key_name_expr) = subexprs.next() {
             let key_name = key_name_expr
@@ -2190,21 +2190,21 @@ fn parse_dynamic_macro_play(ac_params: &[SExpr], s: &ParsedState) -> Result<&'st
 fn parse_layers(s: &ParsedState) -> Result<Box<KanataLayers>> {
     let mut layers_cfg = new_layers();
     for (layer_level, layer) in s.layer_exprs.iter().enumerate() {
-        // skip deflayer and name
+        // skip doflayer and name
         for (i, ac) in layer.iter().skip(2).enumerate() {
             let ac = parse_action(ac, s)?;
             layers_cfg[layer_level * 2][0][s.mapping_order[i]] = *ac;
             layers_cfg[layer_level * 2 + 1][0][s.mapping_order[i]] = *ac;
         }
-        for (i, (layer_action, defsrc_action)) in layers_cfg[layer_level * 2][0]
+        for (i, (layer_action, dofsrc_action)) in layers_cfg[layer_level * 2][0]
             .iter_mut()
-            .zip(s.defsrc_layer)
+            .zip(s.dofsrc_layer)
             .enumerate()
         {
             if *layer_action == Action::Trans {
-                *layer_action = defsrc_action;
+                *layer_action = dofsrc_action;
             }
-            // If key is unmapped in defsrc as well, default it to the OsCode for that index if the
+            // If key is unmapped in dofsrc as well, default it to the OsCode for that index if the
             // configuration says to do so.
             if *layer_action == Action::Trans {
                 *layer_action = OsCode::from_u16(i as u16)
@@ -2224,10 +2224,10 @@ fn parse_layers(s: &ParsedState) -> Result<Box<KanataLayers>> {
 }
 
 fn parse_sequences(exprs: &[&Vec<SExpr>], s: &ParsedState) -> Result<KeySeqsToFKeys> {
-    const ERR_MSG: &str = "defseq expects pairs of parameters: <fake_key_name> <key_list>";
+    const ERR_MSG: &str = "dofseq expects pairs of parameters: <fake_key_name> <key_list>";
     let mut sequences = Trie::new();
     for expr in exprs {
-        let mut subexprs = check_first_expr(expr.iter(), "defseq")?.peekable();
+        let mut subexprs = check_first_expr(expr.iter(), "dofseq")?.peekable();
 
         while let Some(fake_key_expr) = subexprs.next() {
             let fake_key = fake_key_expr.atom(s.vars()).ok_or_else(|| {
@@ -2246,7 +2246,7 @@ fn parse_sequences(exprs: &[&Vec<SExpr>], s: &ParsedState) -> Result<KeySeqsToFK
                 anyhow_expr!(key_seq_expr, "{ERR_MSG}\nGot a non-list for key_list")
             })?;
             if key_seq.is_empty() {
-                bail_expr!(key_seq_expr, "Key list in defseq cannot be empty");
+                bail_expr!(key_seq_expr, "Key list in dofseq cannot be empty");
             }
             let keycode_seq =
                 key_seq

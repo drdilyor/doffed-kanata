@@ -1,31 +1,31 @@
 ;; ARTSEY MINI 0.2 https://github.com/artseyio/artsey/issues/7
 
-;; Exactly one defcfg entry is required. This is used for configuration key-pairs.
-(defcfg
+;; Exactly one dofcfg entry is required. This is used for configuration key-pairs.
+(dofcfg
   ;; Your keyboard device will likely differ from this.
   linux-dev /dev/input/event1
 
   ;; Windows doesn't need any input/output configuration entries; however, there
-  ;; must still be a defcfg entry. You can keep the linux-dev entry or delete
+  ;; must still be a dofcfg entry. You can keep the linux-dev entry or delete
   ;; it and leave it empty.
 )
 
-(defsrc
+(dofsrc
   q    w    e
   a    s    d
 )
 
-(deflayer base
+(doflayer base
   (chord base A) (chord base R) (chord base T)
   (chord base S) (chord base E) (chord base Y)
 )
 
-(deflayer meta
+(doflayer meta
   (chord meta A) (chord meta R) (chord meta T)
   (chord meta S) (chord meta E) (chord meta Y)
 )
 
-(defchords base 5000
+(dofchords base 5000
   (A R T S E Y) (layer-switch meta)
   (A R T      ) (one-shot 2000 lsft)
   (      S E Y) spc
@@ -57,7 +57,7 @@
   (  R   S E  ) z
 )
 
-(defchords meta 5000
+(dofchords meta 5000
   (A R T S E Y) (layer-switch base)
   (      S E Y) spc
   (A R T      ) caps ;; should technically be shift lock, probably need to use fake keys for that 
