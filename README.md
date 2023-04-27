@@ -16,5 +16,6 @@ Replaces all of the following with dof-alternative:
 - `defseq`
 - `deffakekeys`
 - `defchords`
+- `defoverrides`
 
 Learn about kanata [here](https://github.com/drdilyor/doffed-kanata)
