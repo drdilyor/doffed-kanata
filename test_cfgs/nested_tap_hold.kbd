@@ -1,12 +1,12 @@
-(defcfg
+(dofcfg
   linux-dev /dev/input/by-path/platform-i8042-serio-0-event-kbd
 )
 
-(defsrc
+(dofsrc
        a
 )
 
 ;; Note: this config file is invalid and should be rejected
-(deflayer test
+(doflayer test
        (tap-hold 200 200 (tap-hold 200 200 a b) c)
 )

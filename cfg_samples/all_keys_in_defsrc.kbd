@@ -1,6 +1,6 @@
-(defcfg)
+(dofcfg)
 
-(defsrc
+(dofsrc
   grv
   1
   2
@@ -133,7 +133,7 @@
   f24
 )
 
-(deflayer base
+(doflayer base
   grv
   1
   2

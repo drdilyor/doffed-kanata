@@ -5,7 +5,6 @@ for f in README.md dof_update.sh; do
 git reset HEAD $f
 git checkout -- $f
 done
-git commit -m "merged main at $(git rev-parse main)"
 
 
 for f in *; do
@@ -13,6 +12,9 @@ for f in *; do
     git checkout main -- $f
   fi
 done
+
+git add .
+git commit -m "merged main at $(git rev-parse main)"
 
 for f in *; do
   if [[ $(git ls-files $f) != "" && $f != "dof_update.sh" && $f != README.md ]]; then
