@@ -355,6 +355,50 @@ its file name, you must escape those colons with backslashes:
 )
 ----
 
+[[linux-only-linux-dev-names-include]]
+=== Linux only: linux-dev-names-include
+<<table-of-contents,Back to ToC>>
+
+In the case that `linux-dev` is omitted,
+this option defines a list of device names that should be included.
+Device names that do not exist in the list will be ignored.
+This option is parsed identically to `linux-dev`.
+
+Kanata will print device names on startup with log lines that look like below:
+
+----
+registering /dev/input/eventX: "Name goes here"
+----
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-dev-names-include "Device 1 name:Device \:2\: Name"
+)
+----
+
+[[linux-only-linux-dev-names-exclude]]
+=== Linux only: linux-dev-names-exclude
+<<table-of-contents,Back to ToC>>
+
+In the case that `linux-dev` is omitted,
+this option defines a list of device names that should be excluded.
+This option is parsed identically to `linux-dev`.
+
+The `linux-dev-names-include and `linux-dev-names-exclude` options
+are not mutually exclusive
+but in practice it probably only makes sense to use one and not both.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-dev-names-exclude "Device 1 name:Device \:2\: Name"
+)
+----
+
+
 [[log-layer-changes]]
 === log-layer-changes
 <<table-of-contents,Back to ToC>>
@@ -510,6 +554,8 @@ a non-applicable operating system.
   sequence-input-mode visible-backspaced
   log-layer-changes no
   linux-dev /dev/input/dev1:/dev/input/dev2
+  linux-dev-names-include "Name 1:Name 2"
+  linux-dev-names-exclude "Name 3:Name 4"
   linux-continue-if-no-dev-found yes
   linux-unicode-u-code v
   linux-unicode-termination space
@@ -678,23 +724,6 @@ Example specifying multiple config files in the command line:
 kanata -c startup.cfg -c 2nd.cfg -c 3rd.cfg
 ----
 
-[[repeat-key]]
-=== Repeat key
-<<table-of-contents,Back to ToC>>
-
-The action `+rpt+` repeats the most recently typed key. Holding down this key
-will not repeatedly send the key. The intended use case is to be able to use a
-different finger or even thumb key to repeat a typed key, as opposed to
-double-tapping a key.
-
-.Example:
-[source]
-----
-(doflayer has-repeat
-  rpt a s d f
-)
-----
-
 [[layer-switch]]
 === layer-switch
 <<table-of-contents,Back to ToC>>
@@ -828,6 +857,38 @@ These modifiers may be combined together if desired.
 )
 ----
 
+[[repeat-key]]
+=== Repeat key
+<<table-of-contents,Back to ToC>>
+
+The action `+rpt+` repeats the most recently typed key. Holding down this key
+will not repeatedly send the key. The intended use case is to be able to use a
+different finger or even thumb key to repeat a typed key, as opposed to
+double-tapping a key.
+
+.Example:
+[source]
+----
+(doflayer has-repeat
+  rpt a s d f
+)
+----
+
+The `rpt` action only repeats the last key output.
+For example, it won't output a chord like `ctrl+c`
+if the previous key pressed was `C-c`.
+The `rpt` action will only output `c` in this case.
+
+There is a variant `rpt-any`
+which will repeat any previous action
+and would output `ctrl+c` in the example case.
+
+----
+(doflayer has-repeat-any
+  rpt-any a s d f
+)
+----
+
 [[release-a-key-or-layer]]
 === Release a key or layer
 <<table-of-contents,Back to ToC>>
@@ -849,10 +910,6 @@ There is currently no known practical use case for
 
 The `+multi+` action executes multiple keys or actions in order but also
 simultaneously. It accepts one or more actions.
-
-This action may result in unexpected or incorrect behaviour when creating a
-complicated combination of actions. If you find incorrect behaviour, please
-feel free to file an issue.
 
 An example use case is to press the "Alt" key while also activating another
 layer.
@@ -889,6 +946,16 @@ functionality.
   _    _    _    @lft @rgt
 )
 ----
+
+WARNING: This action can sometimes behave in surprising ways
+with regards to simultaneity and order of actions.
+For example, an action like `(multi sldr ')` will not behave as expected.
+Due to implementation details, `sldr` will activate after the `'`
+even though it is listed before.
+This example could instead be written as `(macro sldr 10 ')`,
+and that would work as intended.
+It is recommended to avoid `multi` if it can be replaced
+with a different action like `macro` or an output chord.
 
 [[mouse-actions]]
 === Mouse actions
@@ -1247,6 +1314,8 @@ The actions supported in `+macro+` are:
 * <<live-reload,live reload>>
 * <<fake-keys,fake keys>>
 * <<sequences,sequence leader>>
+* <<arbitrary-code,arbitrary keycode>>
+* <<dynamic-macro,dynamic macro>>
 
 .Example:
 [source]
@@ -1523,7 +1592,7 @@ Only zero or one `dofoverrides` is allowed in a configuration file.
 === Fake keys
 <<table-of-contents,Back to ToC>>
 
-You can define up to 256 fake keys. These keys are not directly mapped to any
+You can define up to 767 fake keys. These keys are not directly mapped to any
 physical key presses and can only be activated via these actions:
 
 * `+(on-press-fakekey <fake key name> <key action>)+`: Activate a fake key
@@ -1704,6 +1773,41 @@ Once "chording mode" is active, all other keys will be directly handled by
 and it maps to a tap-hold with a chord as the hold action within, that chord
 key will immediately activate instead of the key needing to be held for the
 timeout period.
+
+**Release behaviour**
+
+For single key actions and output chords — like `lctl` or `S-tab` —
+and for `layer-while-held`,
+an input chord will release the action only when all keys that are part of
+the input chord have been released.
+In other words, if even one key is held for the input chord
+then the output action will be continued to be held,
+but only for the mentioned action categories.
+
+An exception to the behaviour described above
+for the action categories that would normally apply
+is if a chord decomposition occurs.
+A chord decomposition occurs when you input a chord
+that does not correspond to any action.
+When this happens, kanata splits up the key presses to activate
+other actions from the components of the input chord.
+In this scenario, the behaviour described in the next paragraph will occur.
+
+For chord decompositions and all other action categories,
+the release behaviour is more confusing:
+the output action will end when any key is released during the timeout,
+or if the timeout expires, the output action ends when the *first* key
+that was pressed in the chord gets released.
+This inconsistency is a limitation of the current implementation.
+In these scenarios it is recommended
+to hold down all keys if you want to keep holding
+and to release all keys if you want to do a release.
+This is because it will probably be difficult
+to know which key was pressed first.
+
+If you want to bypass the behaviour of keys being held for chord outputs,
+you could change the chord output actions to be <<macro,macros>> instead.
+Using a macro will guarantee a rapid press+release for the output keys.
 
 [[dofaliasenvcond]]
 === dofaliasenvcond

@@ -585,6 +585,21 @@ fn check_first_expr<'a>(
 
 /// Parse configuration entries from an expression starting with dofcfg.
 fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
+    let valid_cfg_keys = &[
+        "process-unmapped-keys",
+        "danger-enable-cmd",
+        "sequence-timeout",
+        "sequence-input-mode",
+        "log-layer-changes",
+        "linux-dev",
+        "linux-dev-names-include",
+        "linux-dev-names-exclude",
+        "linux-continue-if-no-devs-found",
+        "linux-unicode-u-code",
+        "linux-unicode-termination",
+        "windows-altgr",
+        "windows-interception-mouse-hwid",
+    ];
     let mut cfg = HashMap::default();
     let mut exprs = check_first_expr(expr.iter(), "dofcfg")?;
     // Read k-v pairs from the configuration
@@ -595,10 +610,13 @@ fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
         };
         let val = match exprs.next() {
             Some(v) => v,
-            None => bail_expr!(key, "Found a dofcfg key missing a value"),
+            None => bail_expr!(key, "Found a dofcfg option missing a value"),
         };
         match (&key, &val) {
             (SExpr::Atom(k), SExpr::Atom(v)) => {
+                if !valid_cfg_keys.iter().any(|valid_key| &k.t == valid_key) {
+                    bail_expr!(key, "Unknown dofcfg option {}", k.t);
+                }
                 if cfg
                     .insert(
                         k.t.trim_matches('"').to_owned(),
@@ -606,7 +624,7 @@ fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
                     )
                     .is_some()
                 {
-                    bail_expr!(key, "Duplicate dofcfg entry {}", k.t);
+                    bail_expr!(key, "Duplicate dofcfg option {}", k.t);
                 }
             }
             (SExpr::List(_), _) => {
@@ -995,11 +1013,12 @@ fn parse_action_atom(ac: &Spanned<String>, s: &ParsedState) -> Result<&'static K
                 s.a.sref(s.a.sref_slice(CustomAction::MouseTap(Btn::Backward))),
             )))
         }
-        "rpt" | "repeat" => {
+        "rpt" | "repeat" | "rpt-key" => {
             return Ok(s.a.sref(Action::Custom(
                 s.a.sref(s.a.sref_slice(CustomAction::Repeat)),
             )))
         }
+        "rpt-any" => return Ok(s.a.sref(Action::Repeat)),
         "dynamic-macro-record-stop" => {
             return Ok(s.a.sref(Action::Custom(
                 s.a.sref(s.a.sref_slice(CustomAction::DynamicMacroRecordStop(0))),
@@ -1578,7 +1597,7 @@ fn parse_one_shot(
         action,
         Action::Layer(..) | Action::KeyCode(..) | Action::MultipleKeyCodes(..)
     ) {
-        bail!("one-shot is only allowed to contain layer-toggle, a keycode, or a chord");
+        bail!("one-shot is only allowed to contain layer-while-held, a keycode, or a chord");
     }
 
     Ok(s.a.sref(Action::OneShot(s.a.sref(OneShot {
@@ -1819,6 +1838,7 @@ fn find_chords_coords(chord_groups: &mut [ChordGroup], coord: (u8, u16), action:
         }
         Action::NoOp
         | Action::Trans
+        | Action::Repeat
         | Action::KeyCode(_)
         | Action::MultipleKeyCodes(_)
         | Action::Layer(_)
@@ -1867,6 +1887,7 @@ fn fill_chords(
         }
         Action::NoOp
         | Action::Trans
+        | Action::Repeat
         | Action::KeyCode(_)
         | Action::MultipleKeyCodes(_)
         | Action::Layer(_)
@@ -2560,6 +2581,7 @@ fn add_key_output_from_action_to_key_pos(
         }
         Action::NoOp
         | Action::Trans
+        | Action::Repeat
         | Action::Layer(_)
         | Action::DefaultLayer(_)
         | Action::Sequence { .. }

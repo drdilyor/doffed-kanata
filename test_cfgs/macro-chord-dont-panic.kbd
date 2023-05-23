@@ -1,0 +1,2 @@
+(dofsrc a)
+(doflayer test (macro @ch|bas))

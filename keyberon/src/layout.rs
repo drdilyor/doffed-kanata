@@ -29,6 +29,9 @@ use heapless::Vec;
 
 use State::*;
 
+/// The coordinate type.
+pub type KCoord = (u8, u16);
+
 /// The Layers type.
 ///
 /// `Layers` type is an array of layers which contain the description
@@ -39,17 +42,23 @@ use State::*;
 pub type Layers<'a, const C: usize, const R: usize, const L: usize, T = core::convert::Infallible> =
     [[[Action<'a, T>; C]; R]; L];
 
+const QUEUE_SIZE: usize = 32;
+
 /// The current event queue.
 ///
 /// Events can be retrieved by iterating over this struct and calling [Queued::event].
-type Queue = ArrayDeque<[Queued; 32], arraydeque::behavior::Wrapping>;
+type Queue = ArrayDeque<[Queued; QUEUE_SIZE], arraydeque::behavior::Wrapping>;
+
+/// A list of queued press events. Used for special handling of potentially multiple press events
+/// that occur during a Waiting event.
+type PressedQueue = ArrayDeque<[KCoord; QUEUE_SIZE]>;
 
 /// The queue is currently only used for chord decomposition when a longer chord does not result in
 /// an action, but splitting it into smaller chords would. The buffer size of 8 should be more than
 /// enough for real world usage, but if one wanted to be extra safe, this should be ChordKeys::BITS
 /// since that should guarantee that all potentially queueable actions can fit.
 type ActionQueue<'a, T> = ArrayDeque<[QueuedAction<'a, T>; 8], arraydeque::behavior::Wrapping>;
-type QueuedAction<'a, T> = Option<((u8, u16), &'a Action<'a, T>)>;
+type QueuedAction<'a, T> = Option<(KCoord, &'a Action<'a, T>)>;
 
 /// The layout manager. It takes `Event`s and `tick`s as input, and
 /// generate keyboard reports.
@@ -68,6 +77,7 @@ where
     pub last_press_tracker: LastPressTracker,
     pub active_sequences: ArrayDeque<[SequenceState<'a, T>; 4], arraydeque::behavior::Wrapping>,
     pub action_queue: ActionQueue<'a, T>,
+    pub prev_action: Option<&'a Action<'a, T>>,
 }
 
 /// An event on the key matrix.
@@ -80,7 +90,7 @@ pub enum Event {
 }
 impl Event {
     /// Returns the coordinates (i, j) of the event.
-    pub fn coord(self) -> (u8, u16) {
+    pub fn coord(self) -> KCoord {
         match self {
             Event::Press(i, j) => (i, j),
             Event::Release(i, j) => (i, j),
@@ -98,7 +108,7 @@ impl Event {
     ///     Event::Press(3, 1).transform(|i, j| (i, 11 - j)),
     /// );
     /// ```
-    pub fn transform(self, f: impl FnOnce(u8, u16) -> (u8, u16)) -> Self {
+    pub fn transform(self, f: impl FnOnce(u8, u16) -> KCoord) -> Self {
         match self {
             Event::Press(i, j) => {
                 let (i, j) = f(i, j);
@@ -158,22 +168,22 @@ impl<'a, T> CustomEvent<'a, T> {
 pub enum State<'a, T: 'a> {
     NormalKey {
         keycode: KeyCode,
-        coord: (u8, u16),
+        coord: KCoord,
     },
     LayerModifier {
         value: usize,
-        coord: (u8, u16),
+        coord: KCoord,
     },
     Custom {
         value: &'a T,
-        coord: (u8, u16),
+        coord: KCoord,
     },
     FakeKey {
         keycode: KeyCode,
     }, // Fake key event for sequences
     RepeatingSequence {
         sequence: &'a &'a [SequenceEvent<'a, T>],
-        coord: (u8, u16),
+        coord: KCoord,
     },
     SeqCustomPending(&'a T),
     SeqCustomActive(&'a T),
@@ -197,7 +207,7 @@ impl<'a, T: 'a> State<'a, T> {
         Some(*self)
     }
     /// Returns None if the key has been released and Some otherwise.
-    pub fn release(&self, c: (u8, u16), custom: &mut CustomEvent<'a, T>) -> Option<Self> {
+    pub fn release(&self, c: KCoord, custom: &mut CustomEvent<'a, T>) -> Option<Self> {
         match *self {
             NormalKey { coord, .. }
             | LayerModifier { coord, .. }
@@ -255,7 +265,7 @@ struct TapDanceState<'a, T: 'a> {
 
 #[derive(Copy, Clone, Debug)]
 pub struct TapDanceEagerState<'a, T: 'a> {
-    coord: (u8, u16),
+    coord: KCoord,
     actions: &'a [&'a Action<'a, T>],
     timeout: u16,
     orig_timeout: u16,
@@ -290,7 +300,7 @@ enum WaitingConfig<'a, T: 'a + std::fmt::Debug> {
 
 #[derive(Debug)]
 pub struct WaitingState<'a, T: 'a + std::fmt::Debug> {
-    coord: (u8, u16),
+    coord: KCoord,
     timeout: u16,
     delay: u16,
     ticks: u16,
@@ -318,9 +328,10 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
         &mut self,
         queued: &mut Queue,
         action_queue: &mut ActionQueue<'a, T>,
-    ) -> Option<WaitingAction> {
+    ) -> Option<(WaitingAction, Option<PressedQueue>)> {
         self.timeout = self.timeout.saturating_sub(1);
         self.ticks = self.ticks.saturating_add(1);
+        let mut pq = None;
         let (ret, cfg_change) = match self.config {
             WaitingConfig::HoldTap(htc) => (self.handle_hold_tap(htc, queued), None),
             WaitingConfig::TapDance(ref tds) => {
@@ -341,8 +352,9 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
                 )
             }
             WaitingConfig::Chord(config) => {
-                if let Some((ret, action)) = self.handle_chord(config, queued, action_queue) {
+                if let Some((ret, action, cpq)) = self.handle_chord(config, queued, action_queue) {
                     self.tap = action;
+                    pq = Some(cpq);
                     (Some(ret), None)
                 } else {
                     (None, None)
@@ -352,7 +364,7 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
         if let Some(cfg) = cfg_change {
             self.config = cfg;
         }
-        ret
+        ret.map(|v| (v, pq))
     }
 
     fn handle_hold_tap(&mut self, cfg: HoldTapConfig, queued: &Queue) -> Option<WaitingAction> {
@@ -450,9 +462,10 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
         config: &'a ChordsGroup<'a, T>,
         queued: &mut Queue,
         action_queue: &mut ActionQueue<'a, T>,
-    ) -> Option<(WaitingAction, &'a Action<'a, T>)> {
+    ) -> Option<(WaitingAction, &'a Action<'a, T>, PressedQueue)> {
         // need to keep track of how many Press events we handled so we can filter them out later
         let mut handled_press_events = 0;
+        let mut released_coord = None;
 
         // Compute the set of chord keys that are currently pressed
         // `Ok` when chording mode may continue
@@ -468,7 +481,12 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
                             handled_press_events += 1;
                             Ok(active | chord_keys)
                         }
-                        Event::Release(_, _) => Err(active), // released a chord key, abort
+                        Event::Release(i, j) => {
+                            // release chord quickly by changing the coordinate to the released
+                            // key, to be consistent with chord decomposition behaviour.
+                            released_coord = Some((i, j));
+                            Err(active)
+                        }
                     }
                 } else if matches!(s.event, Event::Press(..)) {
                     Err(active) // pressed a non-chord key, abort
@@ -488,6 +506,9 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
             Ok(active) => {
                 // Chording mode still active, only trigger action if it's unambiguous
                 if let Some(action) = config.get_chord_if_unambiguous(active) {
+                    if let Some(coord) = released_coord {
+                        self.coord = coord;
+                    }
                     (WaitingAction::Tap, action)
                 } else {
                     return None; // nothing to do yet, we'll check back later
@@ -496,6 +517,9 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
             Err(active) => {
                 // Abort chording mode. Trigger a chord action if there is one.
                 if let Some(action) = config.get_chord(active) {
+                    if let Some(coord) = released_coord {
+                        self.coord = coord;
+                    }
                     (WaitingAction::Tap, action)
                 } else {
                     self.decompose_chord_into_action_queue(config, queued, action_queue);
@@ -504,7 +528,9 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
             }
         };
 
-        // Consume all press events that were logically handled by this chording event
+        let mut pq = PressedQueue::new();
+
+        // Return all press events that were logically handled by this chording event
         queued.retain(|s| {
             if self.delay.saturating_sub(s.since) > self.timeout {
                 true
@@ -512,13 +538,14 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
                 && handled_press_events > 0
             {
                 handled_press_events -= 1;
+                let _ = pq.push_back(s.event().coord());
                 false
             } else {
                 true
             }
         });
 
-        Some(res)
+        Some((res.0, res.1, pq))
     }
 
     fn decompose_chord_into_action_queue(
@@ -642,14 +669,14 @@ pub struct SequenceState<'a, T: 'a> {
     remaining_events: &'a [SequenceEvent<'a, T>],
 }
 
-type OneShotKeys = [(u8, u16); ONE_SHOT_MAX_ACTIVE];
-type ReleasedOneShotKeys = Vec<(u8, u16), ONE_SHOT_MAX_ACTIVE>;
+type OneShotKeys = [KCoord; ONE_SHOT_MAX_ACTIVE];
+type ReleasedOneShotKeys = Vec<KCoord, ONE_SHOT_MAX_ACTIVE>;
 
 /// Contains the state of one shot keys that are currently active.
 pub struct OneShotState {
-    /// Coordinates of one shot keys that are active
+    /// KCoordinates of one shot keys that are active
     pub keys: ArrayDeque<OneShotKeys, arraydeque::behavior::Wrapping>,
-    /// Coordinates of one shot keys that have been released
+    /// KCoordinates of one shot keys that have been released
     pub released_keys: ArrayDeque<OneShotKeys, arraydeque::behavior::Wrapping>,
     /// Used to keep track of already-pressed keys for the release variants.
     pub other_pressed_keys: ArrayDeque<OneShotKeys, arraydeque::behavior::Wrapping>,
@@ -663,8 +690,8 @@ pub struct OneShotState {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 enum OneShotHandlePressKey {
-    OneShotKey((u8, u16)),
-    Other((u8, u16)),
+    OneShotKey(KCoord),
+    Other(KCoord),
 }
 
 impl OneShotState {
@@ -716,7 +743,7 @@ impl OneShotState {
     /// Returns true if the caller should handle the release normally and false otherwise.
     /// The second value in the tuple represents an overflow of released one shot keys and should
     /// be released is it is `Some`.
-    fn handle_release(&mut self, (i, j): (u8, u16)) -> (bool, Option<(u8, u16)>) {
+    fn handle_release(&mut self, (i, j): KCoord) -> (bool, Option<KCoord>) {
         if self.keys.is_empty() {
             return (true, None);
         }
@@ -776,7 +803,7 @@ impl Queued {
 
 #[derive(Default)]
 pub struct LastPressTracker {
-    pub coord: (u8, u16),
+    pub coord: KCoord,
     pub tap_hold_timeout: u16,
 }
 
@@ -809,6 +836,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
             last_press_tracker: Default::default(),
             active_sequences: ArrayDeque::new(),
             action_queue: ArrayDeque::new(),
+            prev_action: None,
         }
     }
     /// Iterates on the key codes of the current state.
@@ -832,7 +860,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
             CustomEvent::NoEvent
         }
     }
-    fn waiting_into_tap(&mut self) -> CustomEvent<'a, T> {
+    fn waiting_into_tap(&mut self, pq: Option<PressedQueue>) -> CustomEvent<'a, T> {
         if let Some(w) = &self.waiting {
             let tap = w.tap;
             let coord = w.coord;
@@ -841,7 +869,26 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                 WaitingConfig::TapDance(_) => 0,
             };
             self.waiting = None;
-            self.do_action(tap, coord, delay, false)
+            let ret = self.do_action(tap, coord, delay, false);
+            if let Some(pq) = pq {
+                if matches!(
+                    tap,
+                    Action::KeyCode(_)
+                        | Action::MultipleKeyCodes(_)
+                        | Action::OneShot(_)
+                        | Action::Layer(_)
+                ) {
+                    // The current intent of this block is to ensure that simple actions like
+                    // key presses or layer-while-held remain pressed as long as a single key from
+                    // the input chord remains held. The behaviour of these actions is correct in
+                    // the case of repeating do_action, so there is currently no harm in doing
+                    // this. Other action types are more problematic though.
+                    for other_coord in pq.iter().copied() {
+                        self.do_action(tap, other_coord, delay, false);
+                    }
+                }
+            }
+            ret
         } else {
             CustomEvent::NoEvent
         }
@@ -902,10 +949,10 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
 
         custom.update(match &mut self.waiting {
             Some(w) => match w.tick(&mut self.queue, &mut self.action_queue) {
-                Some(WaitingAction::Hold) => self.waiting_into_hold(),
-                Some(WaitingAction::Tap) => self.waiting_into_tap(),
-                Some(WaitingAction::Timeout) => self.waiting_into_timeout(),
-                Some(WaitingAction::NoOp) => self.drop_waiting(),
+                Some((WaitingAction::Hold, _)) => self.waiting_into_hold(),
+                Some((WaitingAction::Tap, pq)) => self.waiting_into_tap(pq),
+                Some((WaitingAction::Timeout, _)) => self.waiting_into_timeout(),
+                Some((WaitingAction::NoOp, _)) => self.drop_waiting(),
                 None => CustomEvent::NoEvent,
             },
             None => match self.queue.pop_front() {
@@ -1084,7 +1131,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
             self.dequeue(queued);
         }
     }
-    fn press_as_action(&self, coord: (u8, u16), layer: usize) -> &'a Action<'a, T> {
+    fn press_as_action(&self, coord: KCoord, layer: usize) -> &'a Action<'a, T> {
         use crate::action::Action::*;
         let action = self
             .layers
@@ -1106,7 +1153,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
     fn do_action(
         &mut self,
         action: &'a Action<'a, T>,
-        coord: (u8, u16),
+        coord: KCoord,
         delay: u16,
         is_oneshot: bool,
     ) -> CustomEvent<'a, T> {
@@ -1115,8 +1162,16 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
             self.last_press_tracker.tap_hold_timeout = 0;
         }
         use Action::*;
+        if !matches!(action, Repeat | Layer(..) | DefaultLayer(..)) {
+            self.prev_action = Some(action);
+        }
         match action {
             NoOp | Trans => (),
+            Repeat => {
+                if let Some(ac) = self.prev_action {
+                    self.do_action(ac, coord, delay, is_oneshot);
+                }
+            }
             HoldTap(HoldTapAction {
                 timeout,
                 hold,
@@ -1244,6 +1299,15 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                 let mut custom = CustomEvent::NoEvent;
                 for action in *v {
                     custom.update(self.do_action(action, coord, delay, is_oneshot));
+                }
+                // Multi is probably the one action where it is desirable to repeat the top-level
+                // action instead of the final action. The final action meaning a hold action in
+                // `tap-hold` or the 3rd tap of a `tap-dance`.
+                //
+                // Set the prev_action again since it was probably overwritten by the
+                // `do_action` recursion.
+                if !matches!(action, Action::Repeat) {
+                    self.prev_action = Some(action);
                 }
                 return custom;
             }
@@ -2922,8 +2986,10 @@ mod test {
         assert_keys(&[Kb5], layout.keycodes());
         layout.event(Release(0, 2));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
-        assert_keys(&[], layout.keycodes());
+        assert_keys(&[Kb5], layout.keycodes());
         layout.event(Release(0, 3));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
 
         // timeout on terminal chord with no action associated
         // combo like (h j k) -> (h j) (k)
@@ -3005,6 +3071,49 @@ mod test {
     }
 
     #[test]
+    fn test_chord_normalkey_order() {
+        const GROUP: ChordsGroup<core::convert::Infallible> = ChordsGroup {
+            coords: &[((0, 2), 1), ((0, 3), 2), ((0, 4), 4), ((0, 5), 8)],
+            chords: &[
+                (1, &KeyCode(Kb1)),
+                (2, &KeyCode(Kb2)),
+                (4, &KeyCode(Kb3)),
+                (8, &KeyCode(Kb4)),
+                (3, &KeyCode(Kb5)),
+                (11, &KeyCode(Kb6)),
+            ],
+            timeout: 100,
+        };
+        static LAYERS: Layers<6, 1, 1> = [[[
+            NoOp,
+            k(A),
+            Chords(&GROUP),
+            Chords(&GROUP),
+            Chords(&GROUP),
+            Chords(&GROUP),
+        ]]];
+
+        let mut layout = Layout::new(&LAYERS);
+        layout.event(Press(0, 2));
+        // timeout on non-terminal chord
+        for _ in 0..50 {
+            assert_eq!(CustomEvent::NoEvent, layout.tick());
+            assert_keys(&[], layout.keycodes());
+        }
+        layout.event(Press(0, 1));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[Kb1], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[Kb1, A], layout.keycodes());
+        layout.event(Release(0, 1));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[Kb1], layout.keycodes());
+        layout.event(Release(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+    }
+
+    #[test]
     fn test_fork() {
         static LAYERS: Layers<2, 1, 1> = [[[
             Fork(&ForkConfig {
@@ -3033,6 +3142,111 @@ mod test {
         layout.event(Release(0, 0));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[Kb2], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+    }
+
+    #[test]
+    fn test_repeat() {
+        static LAYERS: Layers<5, 1, 2> = [
+            [[
+                k(A),
+                MultipleKeyCodes(&[LShift, B].as_slice()),
+                Repeat,
+                MultipleActions(&[k(C), k(D)].as_slice()),
+                Layer(1),
+            ]],
+            [[
+                k(E),
+                MultipleKeyCodes(&[LShift, F].as_slice()),
+                Repeat,
+                MultipleActions(&[k(G), k(H)].as_slice()),
+                Layer(1),
+            ]],
+        ];
+        let mut layout = Layout::new(&LAYERS);
+
+        // Press a key
+        layout.event(Press(0, 0));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[A], layout.keycodes());
+        layout.event(Release(0, 0));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Repeat it, should be the same
+        layout.event(Press(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[A], layout.keycodes());
+        layout.event(Release(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Press a chord
+        layout.event(Press(0, 1));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[LShift, B], layout.keycodes());
+        layout.event(Release(0, 1));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Repeat it, should be the same
+        layout.event(Press(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[LShift, B], layout.keycodes());
+        layout.event(Release(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Press a multiple action
+        layout.event(Press(0, 3));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[C, D], layout.keycodes());
+        layout.event(Release(0, 3));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Repeat it, should be the same
+        layout.event(Press(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[C, D], layout.keycodes());
+        layout.event(Release(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Go to a different layer and press a key
+        layout.event(Press(0, 4));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+        layout.event(Press(0, 0));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[E], layout.keycodes());
+        layout.event(Release(0, 4));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[E], layout.keycodes());
+        layout.event(Release(0, 0));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Repeat, should be the same as the other layer
+        layout.event(Press(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[E], layout.keycodes());
+        layout.event(Release(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        // Activate the layer action and press repeat there, should still be the same action
+        layout.event(Press(0, 4));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+        layout.event(Press(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[E], layout.keycodes());
+        layout.event(Release(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+        layout.event(Release(0, 4));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[], layout.keycodes());
     }

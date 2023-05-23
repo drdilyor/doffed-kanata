@@ -1,0 +1,6 @@
+(dofcfg
+  this-should-error yes
+)
+
+(dofsrc)
+(doflayer base)
