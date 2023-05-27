@@ -1,5 +1,10 @@
 #!/usr/bin/bash
 
+git checkout main
+git pull || exit
+git checkout dof
+
+
 git merge --no-ff --no-commit main
 for f in README.md dof_update.sh; do
 git reset HEAD $f
