@@ -32,6 +32,7 @@ If you need help, you are welcome to ask.
 
 ;; One dofcfg entry may be added if desired. This is used for configuration
 ;; key-value pairs that change kanata's behaviour at a global level.
+;; All configuration items are optional.
 (dofcfg
   ;; Your keyboard device will likely differ from this. I believe /dev/input/by-id/
   ;; is preferable; I recall reading that it's less likely to change names on you,
@@ -64,9 +65,40 @@ If you need help, you are welcome to ask.
   ;;
   ;; linux-continue-if-no-devs-found yes
 
-  ;; Windows doesn't need any input/output configuration entries; however, there
-  ;; must still be a dofcfg entry.
+  ;; On Linux, you can ask kanata to run `xset r rate <delay> <rate>` on startup
+  ;; and on live reload via the config below. The first number is the delay in ms
+  ;; and the second number is the repeat rate in repeats/second.
   ;;
+  ;; linux-x11-repeat-delay-rate 400,50
+
+  ;; Unicode on Linux works by pressing Ctrl+Shift+U, typing the unicode hex value,
+  ;; then pressing Enter. However, if you do remapping in userspace, e.g. via
+  ;; xmodmap/xkb, the keycode "U" that kanata outputs may not become a keysym "u"
+  ;; after the userspace remapping. This will be likely if you use non-US,
+  ;; non-European keyboards on top of kanata. For unicode to work, kanata needs to
+  ;; use the keycode that outputs the keysym "u", which might not be the keycode
+  ;; "U".
+  ;;
+  ;; You can use `evtest` or `kanata --debug`, set your userspace key remapping,
+  ;; then press the key that outputs the keysym "u" to see which underlying keycode
+  ;; is sent. Then you can use this configuration to change kanata's behaviour.
+  ;;
+  ;; Example:
+  ;;
+  ;;   linux-unicode-u-code v
+
+  ;; Unicode on Linux terminates with the Enter key by default. This may not work in
+  ;; some applications. The termination is configurable with the following options:
+  ;;
+  ;; - `enter`
+  ;; - `space`
+  ;; - `enter-space`
+  ;; - `space-enter`
+  ;;
+  ;; Example:
+  ;;
+  ;;   linux-unicode-termination space
+
   ;; There is an optional configuration entry for Windows to help mitigate strange
   ;; behaviour of AltGr if your layout uses that. Uncomment one of the items below
   ;; to change what kanata does with the key.
@@ -80,7 +112,7 @@ If you need help, you are welcome to ask.
   ;; not work too well with other applications that use WH_KEYBOARD_LL.
   ;; Known applications with issues: GWSL/VcXsrv
 
-  ;; Optional configuration: enable kanata to execute commands.
+  ;; Enable kanata to execute commands.
   ;;
   ;; I consider this feature a hazard so it is conditionally compiled out of
   ;; the default binary.
@@ -91,7 +123,7 @@ If you need help, you are welcome to ask.
   ;;
   ;; danger-enable-cmd yes
 
-  ;; Optional configuration: enable processing of keys that are not in dofsrc.
+  ;; Enable processing of keys that are not in dofsrc.
   ;; This is useful if you are only mapping a few keys in dofsrc instead of
   ;; most of the keys on your keyboard. Without this, the tap-hold-release and
   ;; tap-hold-press actions will not activate for keys that are not in dofsrc.
@@ -102,7 +134,7 @@ If you need help, you are welcome to ask.
   ;;
   ;; process-unmapped-keys yes
 
-  ;; Optional configuration: intercept mouse buttons for a specific mouse device.
+  ;; Intercept mouse buttons for a specific mouse device.
   ;; The intended use case for this is for laptops such as a Thinkpad, which have
   ;; mouse buttons that may be useful to activate kanata actions with. This only
   ;; works with the Interception driver.
@@ -114,6 +146,13 @@ If you need help, you are welcome to ask.
   ;; entry. If this dofcfg item is not defined, the log will not print.
   ;;
   ;; windows-interception-mouse-hwid "70, 0, 90, 0, 20"
+
+  ;; Transparent keys on layers will delegate to the corresponding dofsrc key
+  ;; when found on a layer activated by `layer-switch`. This config entry
+  ;; changes the behaviour to delegate to the action of the first layer,
+  ;; which is the layer active upon startup, that is in the same position.
+  ;;
+  ;; delegate-to-first-layer yes
 )
 
 ;; doflocalkeys-* enables you to define and use key names that match your locale

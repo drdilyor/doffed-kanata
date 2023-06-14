@@ -11,6 +11,7 @@ mod layers;
 mod oskbd;
 mod sequences;
 mod tcp_server;
+mod trie;
 
 use clap::Parser;
 use kanata::Kanata;
@@ -122,6 +123,7 @@ fn cli_init() -> Result<ValidatedArgs> {
     if let Err(e) = log_cfg.set_time_offset_to_local() {
         eprintln!("WARNING: could not set log TZ to local: {e:?}");
     };
+    log_cfg.set_time_format_rfc3339();
     CombinedLogger::init(vec![TermLogger::new(
         log_lvl,
         log_cfg.build(),

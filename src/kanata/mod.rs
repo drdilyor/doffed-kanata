@@ -52,42 +52,91 @@ pub enum DynamicMacroItem {
 }
 
 pub struct Kanata {
+    /// Handle to some OS keyboard output mechanism.
     pub kbd_out: KbdOut,
+    /// Paths to one or more configuration files that define kanata's behaviour.
     pub cfg_paths: Vec<PathBuf>,
+    /// Index into `cfg_paths`, used to know which file to live reload. Changes when cycling
+    /// through the configuration files.
     pub cur_cfg_idx: usize,
+    /// The potential key outputs of every key input. Used for managing key repeat.
     pub key_outputs: cfg::KeyOutputs,
+    /// Handle to the keyberon library layout.
     pub layout: cfg::KanataLayout,
+    /// Reusable vec (to save on allocations) that stores the currently active output keys.
     pub cur_keys: Vec<KeyCode>,
+    /// Reusable vec (to save on allocations) that stores the active output keys from the previous
+    /// tick.
     pub prev_keys: Vec<KeyCode>,
+    /// Used for printing layer info to the info log when changing layers.
     pub layer_info: Vec<LayerInfo>,
+    /// Used to track when a layer change occurs.
     pub prev_layer: usize,
+    /// Vertical scrolling state tracker. Is Some(...) when a vertical scrolling action is active
+    /// and None otherwise.
     pub scroll_state: Option<ScrollState>,
+    /// Horizontal scrolling state. Is Some(...) when a horizontal scrolling action is active and
+    /// None otherwise.
     pub hscroll_state: Option<ScrollState>,
+    /// Vertical mouse movement state. Is Some(...) when vertical mouse movement is active and None
+    /// otherwise.
     pub move_mouse_state_vertical: Option<MoveMouseState>,
+    /// Horizontal mouse movement state. Is Some(...) when horizontal mouse movement is active and
+    /// None otherwise.
     pub move_mouse_state_horizontal: Option<MoveMouseState>,
+    /// The number of ticks defined in the user configuration for sequence timeout.
     pub sequence_timeout: u16,
+    /// The user configuration for backtracking to find valid sequences. See
+    /// <../../docs/sequence-adding-chords-ideas.md> for more info.
     pub sequence_backtrack_modcancel: bool,
+    /// Tracks sequence progress. Is Some(...) when in sequence mode and None otherwise.
     pub sequence_state: Option<SequenceState>,
+    /// Valid sequences defined in the user configuration.
     pub sequences: cfg::KeySeqsToFKeys,
+    /// Stores the user configuration for the sequence input mode.
     pub sequence_input_mode: SequenceInputMode,
+    /// Stores the user recored dynamic macros.
     pub dynamic_macros: HashMap<u16, Vec<DynamicMacroItem>>,
+    /// Tracks the progress of an active dynamic macro. Is Some(...) when a dynamic macro is being
+    /// replayed and None otherwise.
     pub dynamic_macro_replay_state: Option<DynamicMacroReplayState>,
+    /// Tracks the the inputs for a dynamic macro recording. Is Some(...) when a dynamic macro is
+    /// being recorded and None otherwise.
     pub dynamic_macro_record_state: Option<DynamicMacroRecordState>,
+    /// Global overrides defined in the user configuration.
     pub overrides: Overrides,
+    /// Reusable allocations to help with computing whether overrides are active based on key
+    /// outputs.
     pub override_states: OverrideStates,
+    /// Time of the last tick to know how many tick iterations to run, to achieve a 1ms tick
+    /// interval more closely.
     last_tick: time::Instant,
+    /// Tracks the non-whole-millisecond gaps between ticks to know when to do another tick
+    /// iteration without sleeping, to achive a 1ms tick interval more closely.
+    time_remainder: u128,
+    /// Is true if a live reload was requested by the user and false otherwise.
     live_reload_requested: bool,
     #[cfg(target_os = "linux")]
+    /// Linux input paths in the user configuration.
     pub kbd_in_paths: Vec<String>,
     #[cfg(target_os = "linux")]
+    /// Tracks the Linux user configuration to continue or abort if no devices are found.
     continue_if_no_devices: bool,
     #[cfg(target_os = "linux")]
+    /// Tracks the Linux user configuration for device names (instead of paths) that should be
+    /// included for interception and processing by kanata.
     pub include_names: Option<Vec<String>>,
     #[cfg(target_os = "linux")]
+    /// Tracks the Linux user configuration for device names (instead of paths) that should be
+    /// excluded for interception and processing by kanata.
     pub exclude_names: Option<Vec<String>>,
     #[cfg(all(feature = "interception_driver", target_os = "windows"))]
+    /// Used to know which input device to treat as a mouse for intercepting and processing inputs
+    /// by kanata.
     intercept_mouse_hwid: Option<Vec<u8>>,
+    /// User configuration to do logging of layer changes or not.
     log_layer_changes: bool,
+    /// Tracks the caps-word state. Is Some(...) if caps-word is active and None otherwise.
     pub caps_word: Option<CapsWordState>,
 }
 
@@ -248,6 +297,8 @@ impl Kanata {
             .get("linux-dev-names-exclude")
             .cloned()
             .map(|paths| parse_colon_separated_text(&paths));
+        #[cfg(target_os = "linux")]
+        Kanata::set_repeat_rate(&cfg.items)?;
 
         #[cfg(target_os = "windows")]
         unsafe {
@@ -255,6 +306,15 @@ impl Kanata {
             if winapi::um::timeapi::timeBeginPeriod(1) == winapi::um::mmsystem::TIMERR_NOCANDO {
                 bail!("failed to improve timer precision");
             }
+        }
+
+        #[cfg(target_os = "windows")]
+        unsafe {
+            log::info!("Asking Windows to increase process priority");
+            winapi::um::processthreadsapi::SetPriorityClass(
+                winapi::um::processthreadsapi::GetCurrentProcess(),
+                winapi::um::winbase::HIGH_PRIORITY_CLASS,
+            );
         }
 
         update_kbd_out(&cfg.items, &kbd_out)?;
@@ -306,6 +366,7 @@ impl Kanata {
             sequences: cfg.sequences,
             sequence_input_mode,
             last_tick: time::Instant::now(),
+            time_remainder: 0,
             live_reload_requested: false,
             overrides: cfg.overrides,
             override_states: OverrideStates::new(),
@@ -364,6 +425,11 @@ impl Kanata {
             .get("log-layer-changes")
             .map(|s| !matches!(s.to_lowercase().as_str(), "no" | "false" | "0"))
             .unwrap_or(true);
+        self.sequence_backtrack_modcancel = cfg
+            .items
+            .get("sequence-backtrack-modcancel")
+            .map(|s| !matches!(s.to_lowercase().as_str(), "no" | "false" | "0"))
+            .unwrap_or(true);
         self.layout = cfg.layout;
         self.key_outputs = cfg.key_outputs;
         self.layer_info = cfg.layer_info;
@@ -371,6 +437,7 @@ impl Kanata {
         self.overrides = cfg.overrides;
         self.log_layer_changes = log_layer_changes;
         *MAPPED_KEYS.lock() = cfg.mapped_keys;
+        Kanata::set_repeat_rate(&cfg.items)?;
         log::info!("Live reload successful");
         Ok(())
     }
@@ -405,8 +472,12 @@ impl Kanata {
 
     /// Advance keyberon layout state and send events based on changes to its state.
     fn handle_time_ticks(&mut self, tx: &Option<Sender<ServerMessage>>) -> Result<()> {
+        const NS_IN_MS: u128 = 1_000_000;
         let now = time::Instant::now();
-        let ms_elapsed = now.duration_since(self.last_tick).as_millis();
+        let ns_elapsed = now.duration_since(self.last_tick).as_nanos();
+        let ns_elapsed_with_rem = ns_elapsed + self.time_remainder;
+        let ms_elapsed = ns_elapsed_with_rem / NS_IN_MS;
+        self.time_remainder = ns_elapsed_with_rem % NS_IN_MS;
 
         for _ in 0..ms_elapsed {
             self.live_reload_requested |= self.handle_keystate_changes()?;
@@ -434,8 +505,8 @@ impl Kanata {
                 // failing to catch up, reset last_tick to the "actual now" instead the "past now"
                 // even though that means ticks will be missed - meaning there will be fewer than
                 // 1000 ticks in 1ms on average. In practice, there will already be fewer than 1000
-                // ticks in 1ms to the expensive operations, this just avoids having tens to
-                // thousands of ticks all happening as soon as the expensive operation ends.
+                // ticks in 1ms when running expensive operations, this just avoids having tens to
+                // thousands of ticks all happening as soon as the expensive operations end.
                 _ => time::Instant::now(),
             };
 
@@ -585,6 +656,7 @@ impl Kanata {
         // Release keys that do not exist in the current state but exist in the previous state.
         // This used to use a HashSet but it was changed to a Vec because the order of operations
         // matters.
+        log::trace!("{:?}", &self.prev_keys);
         for k in &self.prev_keys {
             if cur_keys.contains(k) {
                 continue;
@@ -597,12 +669,20 @@ impl Kanata {
 
         // Press keys that exist in the current state but are missing from the previous state.
         // Comment above regarding Vec/HashSet also applies here.
+        log::trace!("{cur_keys:?}");
         for k in cur_keys.iter() {
-            log::trace!("{k:?} is pressed");
             if self.prev_keys.contains(k) {
-                log::trace!("{k:?} is contained");
+                log::trace!("{k:?} is old press");
                 continue;
             }
+            // Note - keyberon can return duplicates of a key in the keycodes()
+            // iterator. Instead of trying to fix it in the keyberon library, It
+            // seems better to fix it in the kanata logic. Keyberon iterates over
+            // its internal state array with very simple filtering logic when
+            // calling keycodes(). It would be troublesome to add deduplication
+            // logic there and is easier to add here since we already have
+            // allocations and logic.
+            self.prev_keys.push(*k);
             LAST_PRESSED_KEY.store(OsCode::from(k).into(), SeqCst);
             match &mut self.sequence_state {
                 None => {
@@ -645,19 +725,24 @@ impl Kanata {
                     log::debug!("sequence got {k:?}");
 
                     use crate::sequences::*;
+                    use crate::trie::GetOrDescendentExistsResult::*;
 
-                    // Check for and handle invalid termination
-                    if self.sequences.get_raw_descendant(&state.sequence).is_none() {
+                    // Check for invalid sequence termination.
+                    let mut res = self.sequences.get_or_descendant_exists(&state.sequence);
+                    if res == NotInTrie {
                         let is_invalid_termination = if self.sequence_backtrack_modcancel
                             && (pushed_into_seq & MASK_MODDED > 0)
                         {
                             let mut no_valid_seqs = true;
                             // If applicable, check again with modifier bits unset.
                             for i in (0..state.sequence.len()).rev() {
-                                // Safety: proper bounds are above.
+                                // Safety: proper bounds are immediately above.
+                                // Note - can't use iter_mut due to borrowing issues.
                                 *unsafe { state.sequence.get_unchecked_mut(i) } &= MASK_KEYCODES;
-                                if self.sequences.get_raw_descendant(&state.sequence).is_some() {
+                                res = self.sequences.get_or_descendant_exists(&state.sequence);
+                                if res != NotInTrie {
                                     no_valid_seqs = false;
+                                    break;
                                 }
                             }
                             no_valid_seqs
@@ -684,7 +769,7 @@ impl Kanata {
                     }
 
                     // Check for and handle valid termination.
-                    if let Some((i, j)) = self.sequences.get(&state.sequence) {
+                    if let HasValue((i, j)) = res {
                         log::debug!("sequence complete; tapping fake key");
                         match self.sequence_input_mode {
                             SequenceInputMode::HiddenSuppressed
@@ -735,8 +820,8 @@ impl Kanata {
                                 _ => true,
                             });
                         }
-                        layout.event(Event::Press(*i, *j));
-                        layout.event(Event::Release(*i, *j));
+                        layout.event(Event::Press(i, j));
+                        layout.event(Event::Release(i, j));
                         self.sequence_state = None;
                     }
                 }
