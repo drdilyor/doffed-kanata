@@ -1,0 +1,3 @@
+(dofsrc a)
+(include included-bad2.kbd)
+(dofalias no-action-uh-oh)

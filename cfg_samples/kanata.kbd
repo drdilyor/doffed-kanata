@@ -437,6 +437,38 @@ If you need help, you are welcome to ask.
   ;; the keys in the third parameter (right-trigger-keys) are currently active.
   frk (fork @🙃 @🙁 (lsft rsft))
 
+  ;; switch accepts triples of keys check, action, and fallthrough|break.
+  ;; The default usage of keys check behaves similarly to fork.
+  ;; However, it also accepts boolean operators and|or to allow more
+  ;; complex use cases.
+  ;;
+  ;; The order of cases matters. If two different cases match the
+  ;; currently pressed keys, the case listed earlier in the configuration
+  ;; will activate first. If the early case uses break, the second case will
+  ;; not activate at all. Otherwise if fallthrough is used, the second case
+  ;; will also activate sequentially after the first case.
+  swt (switch
+
+    ;; translating this keys check to some other common languages
+    ;; this might look like:
+    ;;
+    ;;    (a && b && (c || d) && (e || f))
+    ((and a b (or c d) (or e f))) a break
+
+    ;; this case behaves like fork, i.e.
+    ;;
+    ;;    (or a b c)
+    ;;
+    ;; or for some other common languages:
+    ;;
+    ;;    a || b || c
+    (a b c) b fallthrough
+
+    ;; default case, empty list always evaluates to true.
+    ;; break vs. fallthrough doesn't matter here
+    () c break
+  )
+
   ;; Having a cmd action in your configuration without explicitly enabling
   ;; `danger-enable-cmd` **and** using the cmd-enabled executable will make
   ;; kanata refuse to load your configuration. The aliases below are commented
@@ -631,7 +663,7 @@ If you need help, you are welcome to ask.
   _    @mwu @mwd @mwl @mwr _    _    _    _    _    @ma↑ _    _    _
   _    pgup bck  _    fwd  _    _    _    _    @ma← @ma↓ @ma→ _    _
   _    pgdn mlft _    mrgt mmid _    mbck mfwd _    @ms↑ _    _
-  _    _    mltp _    mrtp mmtp _    mbtp mftp @ms← @ms↓ @ms→
+  @fms _    mltp _    mrtp mmtp _    mbtp mftp @ms← @ms↓ @ms→
   _    _    _              _              _    _    _
 )
 
@@ -680,6 +712,12 @@ If you need help, you are welcome to ask.
   ;; treated as one giant screen, which may make it a bit confusing for how to
   ;; set up the pixels. You will need to experiment.
   sm (setmouse 32228 32228)
+
+  ;; movemouse-speed takes a percentage by which it then scales all of the
+  ;; mouse movements while held. You can have as many of these active at a
+  ;; given time as you would like, but be warned that some values, such as 33
+  ;; may not have correct pixel distance representations.
+  fms (movemouse-speed 200)
 )
 
 (dofalias
@@ -793,6 +831,11 @@ If you need help, you are welcome to ask.
 ;; You can add an entry to dofcfg to change the sequence timeout (default is 1000):
 ;;     sequence-timeout <number(ms)>
 ;;
+;; If you want multiple timeouts with different leaders, you can also activate the
+;; sequence action:
+;;     (sequence <timeout>)
+;; This acts like `sldr` but uses a different timeout.
+;;
 ;; There is also an option to customize the key sequence input mode. Its default
 ;; value when not configured is `hidden-suppressed`.
 ;;
@@ -816,6 +859,18 @@ If you need help, you are welcome to ask.
 (dofseq git-status (g s t))
 (doffakekeys git-status (macro g i t spc s t a t u s))
 (dofalias rcl (tap-hold-release 200 200 sldr rctl))
+
+(dofseq
+    dotcom (. S-3)
+    dotorg (. S-4)
+)
+(doffakekeys
+    dotcom (macro . c o m)
+    dotorg (macro . o r g)
+)
+;; Enter sequence mode and input .
+(dofalias dot-sequence (macro (sequence 250) 10 .))
+(dofalias dot-sequence-inputmode (macro (sequence 250 hidden-delay-type) 10 .))
 
 ;; Input chording.
 ;;
@@ -871,9 +926,15 @@ If you need help, you are welcome to ask.
   (  2 4 8) (multi 1 4)
   (1 2 4 8) (multi 1 5)
 )
+
 (dofalias
   ch1 (chord binary 1)
   ch2 (chord binary 2)
   ch4 (chord binary 4)
   ch8 (chord binary 8)
 )
+
+;; The top-level action `include` will read a configuration from a new file.
+;; At the time of writing, includes can only be placed at the top level. The
+;; included files also cannot contain includes themselves.
+(include included-file.kbd)

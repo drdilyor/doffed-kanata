@@ -10,15 +10,17 @@ use signal_hook::{
     iterator::Signals,
 };
 
+use std::convert::TryFrom;
 use std::fs;
 use std::io;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::thread;
 
-use crate::custom_action::*;
-use crate::keys::KeyEvent;
-use crate::keys::*;
+use super::*;
+use crate::oskbd::KeyEvent;
+use kanata_parser::custom_action::*;
+use kanata_parser::keys::*;
 
 pub struct KbdIn {
     devices: HashMap<Token, (Device, String)>,
@@ -254,6 +256,25 @@ pub fn is_input_device(device: &Device) -> bool {
             device.name().unwrap_or("unknown device name")
         );
         false
+    }
+}
+
+impl TryFrom<InputEvent> for KeyEvent {
+    type Error = ();
+    fn try_from(item: InputEvent) -> Result<Self, Self::Error> {
+        match item.kind() {
+            evdev::InputEventKind::Key(k) => Ok(Self {
+                code: OsCode::from_u16(k.0).ok_or(())?,
+                value: KeyValue::from(item.value()),
+            }),
+            _ => Err(()),
+        }
+    }
+}
+
+impl From<KeyEvent> for InputEvent {
+    fn from(item: KeyEvent) -> Self {
+        InputEvent::new(EventType::KEY, item.code as u16, item.value as i32)
     }
 }
 
@@ -603,18 +624,6 @@ fn watch_devinput() -> Result<Inotify, io::Error> {
     let mut inotify = Inotify::init().expect("Failed to initialize inotify");
     inotify.add_watch("/dev/input", WatchMask::CREATE)?;
     Ok(inotify)
-}
-
-impl From<Btn> for OsCode {
-    fn from(btn: Btn) -> Self {
-        match btn {
-            Btn::Left => OsCode::BTN_LEFT,
-            Btn::Right => OsCode::BTN_RIGHT,
-            Btn::Mid => OsCode::BTN_MIDDLE,
-            Btn::Forward => OsCode::BTN_EXTRA,
-            Btn::Backward => OsCode::BTN_SIDE,
-        }
-    }
 }
 
 #[derive(Clone)]

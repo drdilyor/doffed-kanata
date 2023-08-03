@@ -53,11 +53,16 @@ type Queue = ArrayDeque<[Queued; QUEUE_SIZE], arraydeque::behavior::Wrapping>;
 /// that occur during a Waiting event.
 type PressedQueue = ArrayDeque<[KCoord; QUEUE_SIZE]>;
 
+/// The maximum number of actions that can be activated concurrently via chord decomposition or
+/// activation of multiple switch cases using fallthrough.
+pub const ACTION_QUEUE_LEN: usize = 8;
+
 /// The queue is currently only used for chord decomposition when a longer chord does not result in
 /// an action, but splitting it into smaller chords would. The buffer size of 8 should be more than
 /// enough for real world usage, but if one wanted to be extra safe, this should be ChordKeys::BITS
 /// since that should guarantee that all potentially queueable actions can fit.
-type ActionQueue<'a, T> = ArrayDeque<[QueuedAction<'a, T>; 8], arraydeque::behavior::Wrapping>;
+type ActionQueue<'a, T> =
+    ArrayDeque<[QueuedAction<'a, T>; ACTION_QUEUE_LEN], arraydeque::behavior::Wrapping>;
 type QueuedAction<'a, T> = Option<(KCoord, &'a Action<'a, T>)>;
 
 /// The layout manager. It takes `Event`s and `tick`s as input, and
@@ -840,7 +845,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
         }
     }
     /// Iterates on the key codes of the current state.
-    pub fn keycodes(&self) -> impl Iterator<Item = KeyCode> + '_ {
+    pub fn keycodes(&self) -> impl Iterator<Item = KeyCode> + Clone + '_ {
         self.states.iter().filter_map(State::keycode)
     }
     fn waiting_into_hold(&mut self) -> CustomEvent<'a, T> {
@@ -1157,7 +1162,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
         delay: u16,
         is_oneshot: bool,
     ) -> CustomEvent<'a, T> {
-        assert!(self.waiting.is_none() || matches!(action, Action::Custom(..)));
+        self.clear_and_handle_waiting(action);
         if self.last_press_tracker.coord != coord {
             self.last_press_tracker.tap_hold_timeout = 0;
         }
@@ -1166,7 +1171,12 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
             self.prev_action = Some(action);
         }
         match action {
-            NoOp | Trans => (),
+            NoOp | Trans => {
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
+            }
             Repeat => {
                 if let Some(ac) = self.prev_action {
                     self.do_action(ac, coord, delay, is_oneshot);
@@ -1318,6 +1328,10 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                     tapped: None,
                     remaining_events: events,
                 });
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
             }
             RepeatableSequence { events } => {
                 self.active_sequences.push_back(SequenceState {
@@ -1330,6 +1344,10 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                     sequence: events,
                     coord,
                 });
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
             }
             CancelSequences => {
                 // Clear any and all running sequences then clean up any leftover FakeKey events
@@ -1339,23 +1357,43 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                         self.states.retain(|s| s.seq_release(keycode).is_some());
                     }
                 }
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
             }
             &Layer(value) => {
                 self.last_press_tracker.coord = coord;
                 let _ = self.states.push(LayerModifier { value, coord });
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
             }
             DefaultLayer(value) => {
                 self.last_press_tracker.coord = coord;
                 self.set_default_layer(*value);
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
             }
             Custom(value) => {
                 self.last_press_tracker.coord = coord;
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
                 if self.states.push(State::Custom { value, coord }).is_ok() {
                     return CustomEvent::Press(value);
                 }
             }
             ReleaseState(rs) => {
                 self.states.retain(|s| s.release_state(*rs).is_some());
+                if !is_oneshot {
+                    self.oneshot
+                        .handle_press(OneShotHandlePressKey::Other(coord));
+                }
             }
             Fork(fcfg) => {
                 return match self.states.iter().any(|s| match s {
@@ -1368,8 +1406,50 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                     true => self.do_action(&fcfg.right, coord, delay, false),
                 };
             }
+            Switch(sw) => {
+                let kcs = self.states.iter().filter_map(State::keycode);
+                let action_queue = &mut self.action_queue;
+                for ac in sw.actions(kcs.clone()) {
+                    action_queue.push_back(Some((coord, ac)));
+                }
+            }
         }
         CustomEvent::NoEvent
+    }
+
+    /// Clear the waiting state if it is about to be overwritten by a new waiting state.
+    ///
+    /// If something is waiting **and** another waiting action is currently being activated, that
+    /// probably means that there were multiple actions in the action queue caused by a single
+    /// terminal state. In this scenario, do some sensible default for the waiting state and end it
+    /// early, since a new action should interrupt the waiting action anyway.
+    ///
+    /// Another potential concern is if there is some processing in the event queue that needs to
+    /// happen as part of the cleanup, i.e. the code runs in `handle_tap_dance`, `handle_chord`
+    /// where some queued events are consumed. I'm fairly sure that there is no extra processing
+    /// that needs to happen. Actions in the action queue should be activated on subsequent ticks
+    /// with no room for key events to be a factor when handling this case.
+    fn clear_and_handle_waiting(&mut self, action: &'a Action<'a, T>) {
+        if !matches!(
+            action,
+            Action::HoldTap(_) | Action::TapDance(_) | Action::Chords(_)
+        ) {
+            return;
+        }
+        let mut waiting_action = None;
+        if let Some(waiting) = &self.waiting {
+            waiting_action = match waiting.config {
+                WaitingConfig::HoldTap(_) => Some((waiting.tap, waiting.coord, waiting.delay)),
+                WaitingConfig::TapDance(tdc) => {
+                    Some((tdc.actions[0], waiting.coord, waiting.delay))
+                }
+                WaitingConfig::Chord(_) => None,
+            };
+            self.waiting = None;
+        };
+        if let Some((action, coord, delay)) = waiting_action {
+            self.do_action(action, coord, delay, false);
+        };
     }
 
     /// Obtain the index of the current active layer

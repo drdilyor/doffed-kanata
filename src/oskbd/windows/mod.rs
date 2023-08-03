@@ -4,7 +4,7 @@ use winapi::um::winuser::*;
 
 use encode_unicode::CharExt;
 
-use crate::keys::KeyValue;
+use crate::oskbd::KeyValue;
 
 #[cfg(not(feature = "interception_driver"))]
 mod llhook;

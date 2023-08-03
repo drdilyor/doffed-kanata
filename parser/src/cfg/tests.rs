@@ -1,5 +1,6 @@
 use super::*;
 use crate::cfg::sexpr::parse;
+use kanata_keyberon::action::BooleanOperator::*;
 
 use std::sync::Mutex;
 
@@ -16,58 +17,12 @@ fn sizeof_action_is_two_usizes() {
 #[test]
 fn span_works() {
     let s = "(hello world my oyster)\n(row two)";
-    let tlevel = parse(s).unwrap();
+    let tlevel = parse(s, "test").unwrap();
     assert_eq!(
         &s[tlevel[0].span.start..tlevel[0].span.end],
         "(hello world my oyster)"
     );
     assert_eq!(&s[tlevel[1].span.start..tlevel[1].span.end], "(row two)");
-}
-
-#[test]
-fn parse_simple() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    new_from_file(&std::path::PathBuf::from("./cfg_samples/simple.kbd")).unwrap();
-}
-
-#[test]
-fn parse_minimal() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    new_from_file(&std::path::PathBuf::from("./cfg_samples/minimal.kbd")).unwrap();
-}
-
-#[test]
-fn parse_default() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    new_from_file(&std::path::PathBuf::from("./cfg_samples/kanata.kbd")).unwrap();
-}
-
-#[test]
-fn parse_jtroo() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let cfg = new_from_file(&std::path::PathBuf::from("./cfg_samples/jtroo.kbd")).unwrap();
-    assert_eq!(cfg.layer_info.len(), 16);
-}
-
-#[test]
-fn parse_f13_f24() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    new_from_file(&std::path::PathBuf::from("./cfg_samples/f13_f24.kbd")).unwrap();
 }
 
 #[test]
@@ -139,10 +94,9 @@ fn parse_action_vars() {
 (dofchords $e $one $1 $two)
 (dofchords $e2 $one ($one) $two)
 "#;
-    s.cfg_text = source.into();
-    parse_cfg_raw_string(source.into(), &mut s)
+    parse_cfg_raw_string(source, &mut s, "test")
         .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e.into(), &s));
+            eprintln!("{:?}", error_with_source(e));
             ""
         })
         .unwrap();
@@ -161,10 +115,9 @@ fn parse_delegate_to_default_layer_yes() {
 (doflayer base b)
 (doflayer other _)
 "#;
-    s.cfg_text = source.into();
-    let res = parse_cfg_raw_string(source.into(), &mut s)
+    let res = parse_cfg_raw_string(source, &mut s, "test")
         .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e.into(), &s));
+            eprintln!("{:?}", error_with_source(e));
             ""
         })
         .unwrap();
@@ -187,10 +140,9 @@ fn parse_delegate_to_default_layer_yes_but_base_transparent() {
 (doflayer base _)
 (doflayer other _)
 "#;
-    s.cfg_text = source.into();
-    let res = parse_cfg_raw_string(source.into(), &mut s)
+    let res = parse_cfg_raw_string(source, &mut s, "test")
         .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e.into(), &s));
+            eprintln!("{:?}", error_with_source(e));
             ""
         })
         .unwrap();
@@ -213,10 +165,9 @@ fn parse_delegate_to_default_layer_no() {
 (doflayer base b)
 (doflayer other _)
 "#;
-    s.cfg_text = source.into();
-    let res = parse_cfg_raw_string(source.into(), &mut s)
+    let res = parse_cfg_raw_string(source, &mut s, "test")
         .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e.into(), &s));
+            eprintln!("{:?}", error_with_source(e));
             ""
         })
         .unwrap();
@@ -234,7 +185,7 @@ fn parse_transparent_default() {
     };
     let mut s = ParsedState::default();
     let (_, _, layer_strings, layers, _, _) = parse_cfg_raw(
-        &std::path::PathBuf::from("./cfg_samples/transparent_default.kbd"),
+        &std::path::PathBuf::from("./test_cfgs/transparent_default.kbd"),
         &mut s,
     )
     .unwrap();
@@ -274,18 +225,6 @@ fn parse_transparent_default() {
 }
 
 #[test]
-fn parse_all_keys() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    new_from_file(&std::path::PathBuf::from(
-        "./cfg_samples/all_keys_in_defsrc.kbd",
-    ))
-    .unwrap();
-}
-
-#[test]
 fn parse_multiline_comment() {
     let _lk = match CFG_PARSE_LOCK.lock() {
         Ok(guard) => guard,
@@ -304,7 +243,7 @@ fn disallow_nested_tap_hold() {
         Err(poisoned) => poisoned.into_inner(),
     };
     match new_from_file(&std::path::PathBuf::from("./test_cfgs/nested_tap_hold.kbd"))
-        .map_err(|e| format!("{e:?}"))
+        .map_err(|e| format!("{}", e.help().unwrap()))
     {
         Ok(_) => panic!("invalid nested tap-hold in tap action was Ok'd"),
         Err(e) => assert!(e.contains("tap-hold"), "real e: {e}"),
@@ -346,7 +285,7 @@ fn disallow_multiple_waiting_actions() {
         Err(poisoned) => poisoned.into_inner(),
     };
     match new_from_file(&std::path::PathBuf::from("./test_cfgs/bad_multi.kbd"))
-        .map_err(|e| format!("{e:?}"))
+        .map_err(|e| format!("{}", e.help().unwrap()))
     {
         Ok(_) => panic!("invalid multiple waiting actions Ok'd"),
         Err(e) => assert!(e.contains("Cannot combine multiple")),
@@ -426,7 +365,7 @@ fn recursive_multi_is_flattened() {
 #[test]
 fn test_parse_sequence_a_b() {
     let seq = parse_sequence_keys(
-        &parse("(a b)").expect("parses")[0].t,
+        &parse("(a b)", "test").expect("parses")[0].t,
         &ParsedState::default(),
     )
     .expect("parses");
@@ -438,7 +377,7 @@ fn test_parse_sequence_a_b() {
 #[test]
 fn test_parse_sequence_sa_b() {
     let seq = parse_sequence_keys(
-        &parse("(S-a b)").expect("parses")[0].t,
+        &parse("(S-a b)", "test").expect("parses")[0].t,
         &ParsedState::default(),
     )
     .expect("parses");
@@ -451,7 +390,7 @@ fn test_parse_sequence_sa_b() {
 #[test]
 fn test_parse_sequence_sab() {
     let seq = parse_sequence_keys(
-        &parse("(S-(a b))").expect("parses")[0].t,
+        &parse("(S-(a b))", "test").expect("parses")[0].t,
         &ParsedState::default(),
     )
     .expect("parses");
@@ -464,7 +403,7 @@ fn test_parse_sequence_sab() {
 #[test]
 fn test_parse_sequence_bigchord() {
     let seq = parse_sequence_keys(
-        &parse("(AG-A-M-C-S-(a b) c)").expect("parses")[0].t,
+        &parse("(AG-A-M-C-S-(a b) c)", "test").expect("parses")[0].t,
         &ParsedState::default(),
     )
     .expect("parses");
@@ -482,7 +421,7 @@ fn test_parse_sequence_bigchord() {
 #[test]
 fn test_parse_sequence_inner_chord() {
     let seq = parse_sequence_keys(
-        &parse("(S-(a b C-c) d)").expect("parses")[0].t,
+        &parse("(S-(a b C-c) d)", "test").expect("parses")[0].t,
         &ParsedState::default(),
     )
     .expect("parses");
@@ -498,7 +437,7 @@ fn test_parse_sequence_inner_chord() {
 #[test]
 fn test_parse_sequence_earlier_inner_chord() {
     let seq = parse_sequence_keys(
-        &parse("(S-(a C-b c) d)").expect("parses")[0].t,
+        &parse("(S-(a C-b c) d)", "test").expect("parses")[0].t,
         &ParsedState::default(),
     )
     .expect("parses");
@@ -514,7 +453,7 @@ fn test_parse_sequence_earlier_inner_chord() {
 #[test]
 fn test_parse_sequence_numbers() {
     let seq = parse_sequence_keys(
-        &parse("(0 1 2 3 4 5 6 7 8 9)").expect("parses")[0].t,
+        &parse("(0 1 2 3 4 5 6 7 8 9)", "test").expect("parses")[0].t,
         &ParsedState::default(),
     )
     .expect("parses");
@@ -534,10 +473,12 @@ fn test_parse_sequence_numbers() {
 #[test]
 fn test_parse_macro_numbers() {
     // Note, can't test zero in this way because a delay of 0 isn't allowed by the parsing.
-    let exprs = parse("(1 2 3 4 5 6 7 8 9)").expect("parses")[0].t.clone();
+    let exprs = parse("(1 2 3 4 5 6 7 8 9)", "test").expect("parses")[0]
+        .t
+        .clone();
     let mut expr_rem = exprs.as_slice();
     let mut i = 1;
-    while expr_rem.len() > 0 {
+    while !expr_rem.is_empty() {
         let (macro_events, expr_rem_tmp) =
             parse_macro_item(expr_rem, &ParsedState::default()).expect("parses");
         expr_rem = expr_rem_tmp;
@@ -549,6 +490,184 @@ fn test_parse_macro_numbers() {
         i += 1;
     }
 
-    let exprs = parse("(0)").expect("parses")[0].t.clone();
+    let exprs = parse("(0)", "test").expect("parses")[0].t.clone();
     parse_macro_item(exprs.as_slice(), &ParsedState::default()).expect_err("errors");
+}
+
+#[test]
+fn test_include_good() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    new_from_file(&std::path::PathBuf::from("./test_cfgs/include-good.kbd")).unwrap();
+}
+
+#[test]
+fn test_include_bad_has_filename_included() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let err = format!(
+        "{:?}",
+        new_from_file(
+            &std::path::Path::new(".")
+                .join("test_cfgs")
+                .join("include-bad.kbd")
+        )
+        .map(|_| ())
+        .unwrap_err()
+    );
+    assert!(err.contains(&format!(
+        "test_cfgs{}included-bad.kbd",
+        std::path::MAIN_SEPARATOR
+    )));
+    assert!(!err.contains(&format!(
+        "test_cfgs{}include-bad.kbd",
+        std::path::MAIN_SEPARATOR
+    )));
+}
+
+#[test]
+fn test_include_bad2_has_original_filename() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let err = format!(
+        "{:?}",
+        new_from_file(
+            &std::path::Path::new(".")
+                .join("test_cfgs")
+                .join("include-bad2.kbd")
+        )
+        .map(|_| ())
+        .unwrap_err()
+    );
+    assert!(!err.contains(&format!(
+        "test_cfgs{}included-bad2.kbd",
+        std::path::MAIN_SEPARATOR
+    )));
+    assert!(err.contains(&format!(
+        "test_cfgs{}include-bad2.kbd",
+        std::path::MAIN_SEPARATOR
+    )));
+}
+
+#[test]
+fn parse_submacro() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofsrc a)
+(doflayer base
+  (macro M-S-())
+)
+"#;
+    parse_cfg_raw_string(source, &mut s, "test")
+        .map_err(|e| {
+            eprintln!("{:?}", error_with_source(e));
+            ""
+        })
+        .unwrap_err();
+}
+
+#[test]
+fn parse_switch() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofvar var1 a)
+(dofsrc a)
+(doflayer base
+  (switch
+    ((and a b (or c d) (or e f))) XX break
+    () _ fallthrough
+    (a b c) $var1 fallthrough
+    ((or (or (or (or (or (or (or (or))))))))) $var1 fallthrough
+  )
+)
+"#;
+    let res = parse_cfg_raw_string(source, &mut s, "test")
+        .map_err(|e| {
+            eprintln!("{:?}", error_with_source(e));
+            ""
+        })
+        .unwrap();
+    assert_eq!(
+        res.3[0][0][OsCode::KEY_A.as_u16() as usize],
+        Action::Switch(&Switch {
+            cases: &[
+                (
+                    &[
+                        OpCode::new_bool(And, 9),
+                        OpCode::new_key(KeyCode::A),
+                        OpCode::new_key(KeyCode::B),
+                        OpCode::new_bool(Or, 6),
+                        OpCode::new_key(KeyCode::C),
+                        OpCode::new_key(KeyCode::D),
+                        OpCode::new_bool(Or, 9),
+                        OpCode::new_key(KeyCode::E),
+                        OpCode::new_key(KeyCode::F),
+                    ],
+                    &Action::NoOp,
+                    BreakOrFallthrough::Break
+                ),
+                (&[], &Action::Trans, BreakOrFallthrough::Fallthrough),
+                (
+                    &[
+                        OpCode::new_key(KeyCode::A),
+                        OpCode::new_key(KeyCode::B),
+                        OpCode::new_key(KeyCode::C),
+                    ],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Fallthrough
+                ),
+                (
+                    &[
+                        OpCode::new_bool(Or, 8),
+                        OpCode::new_bool(Or, 8),
+                        OpCode::new_bool(Or, 8),
+                        OpCode::new_bool(Or, 8),
+                        OpCode::new_bool(Or, 8),
+                        OpCode::new_bool(Or, 8),
+                        OpCode::new_bool(Or, 8),
+                        OpCode::new_bool(Or, 8),
+                    ],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Fallthrough
+                ),
+            ]
+        })
+    );
+}
+
+#[test]
+fn parse_switch_exceed_depth() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofsrc a)
+(doflayer base
+  (switch
+    ((or (or (or (or (or (or (or (or (or)))))))))) XX break
+  )
+)
+"#;
+    parse_cfg_raw_string(source, &mut s, "test")
+        .map_err(|e| {
+            eprintln!("{:?}", error_with_source(e));
+            ""
+        })
+        .unwrap_err();
 }
