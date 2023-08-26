@@ -63,10 +63,11 @@ amount of whitespace (spaces, tabs, newlines) are not relevant. You may use
 spaces, tabs, or newlines however you like to visually format `dofsrc` to your
 liking.
 
-The the primary source of all key names is the
-https://github.com/jtroo/kanata/blob/main/parser/src/keys/mod.rs[str_to_oscode]
-function in the source code. Please feel free to file an issue if you're unable
-to find the key you're looking for.
+The the primary source of all key names are the
+`str_to_oscode` and `default_mappings` functions in
+https://github.com/jtroo/kanata/blob/main/parser/src/keys/mod.rs[the source].
+Please feel welcome to file an issue
+if you're unable to find the key you're looking for.
 
 An example `dofsrc` containing the US QWERTY keyboard keys as an
 approximately 60% keyboard layout:
@@ -81,6 +82,9 @@ approximately 60% keyboard layout:
   lctl lmet lalt           spc            ralt rmet rctl
 )
 ----
+
+Note that some keyboards have a Compose/Menu key instead of a right Meta key.
+In this case you can use `comp` instead of `rmet`.
 
 For non-US keyboards, see <<non-us-keyboards,this section>>.
 
@@ -366,7 +370,7 @@ overhead. If you do not care for the logging, you can choose to disable it.
 ----
 
 [[delegate-to-first-layer]]
-== delegate-to-first-layer
+=== delegate-to-first-layer
 <<table-of-contents,Back to ToC>>
 
 
@@ -1366,8 +1370,8 @@ but you should be wary of activating the hold action unintentionally.
 
 There are further additional variants of `tap-hold-press` and `tap-hold-release`:
 
-. `tap-hold-press-timeout`
-. `tap-hold-release-timeout`
+- `tap-hold-press-timeout`
+- `tap-hold-release-timeout`
 
 These variants take a 5th parameter, in addition to the same 4 as the other
 variants. The 5th parameter is another action, which will activate if the hold
@@ -1376,9 +1380,16 @@ non `-timeout` variants will activate the hold action in both cases.
 
 - `tap-hold-release-keys`
 
-This variant takes a 5th parameter which is a list of keys that trigger an
-early tap when they are pressed while the `tap-hold-release-keys` action is
-waiting.
+This variant takes a 5th parameter which is a list of keys
+that trigger an early tap
+when they are pressed while the `tap-hold-release-keys` action is waiting.
+Otherwise this behaves as `tap-hold-release`.
+
+The keys in the 5th parameter correspond to the physical input keys,
+or in other words the key that corresponds to `dofsrc`.
+This is in contrast to the `fork` and `switch` actions
+which operates on outputted keys, or in other words the outputs
+that are in `doflayer`, `dofalias`, etc. for the corresponding `dofsrc` key.
 
 .Example:
 [source]
@@ -1735,6 +1746,9 @@ physical key presses and can only be activated via these actions:
   action when pressing the key mapped to this action.
 * `+(on-release-fakekey <fake key name> <key action>)+`: Activate a fake key
   action when releasing the key mapped to this action.
+* `+(on-idle-fakekey <fake key name> <key action> <idle time>)+`:
+  Activate a fake key action when kanata has been idle
+  for at least `idle time` milliseconds.
 
 A fake key can be defined in a `+doffakekeys+` configuration entry. Configuring
 this entry is similar to `+dofalias+`, but you cannot make use of aliases
@@ -1747,6 +1761,15 @@ The aforementioned `+<key action>+` can be one of three values:
   triggers a release or tap.
 * `+release+`: Release the fake key. If it's not already pressed, this does nothing.
 * `+tap+`: Press and release the fake key. If it's already pressed, this only releases it.
+* `+toggle+`: Press the fake key if not already pressed, otherwise release it.
+
+Expanding on the `on-idle-fakekey` action some more,
+the wording that "kanata" has been idle is important.
+Even if the keyboard is idle, kanata may not yet be idle.
+For example, if a long-running macro is playing,
+or kanata is waiting for the timeout of actions such as `caps-word` or `tap-dance`,
+kanata is not yet idle, and the tick count for the `<idle time>` parameter
+will not yet be counting even if you no longer have any keyboard keys pressed.
 
 .Example:
 [source]
@@ -1780,40 +1803,15 @@ The aforementioned `+<key action>+` can be one of three values:
 
   pal (on-press-fakekey pal tap)
   ral (on-press-fakekey ral tap)
+
+  isf (on-idle-fakekey sft tap 1000)
 )
 
 (doflayer use-fake-keys
-  @psf @rsf @pal @ral a s d f
+  @psf @rsf @pal @ral a s d f @isf
 )
 ----
 
-If you find that an application isn't registering keypresses correctly with
-`+multi+` because the sequence activates too quickly, you can try using fake
-key actions alongside the delay actions below.
-
-* `+on-press-fakekey-delay+`
-* `+on-release-fakekey-delay+`
-
-Do note that processing a fakekey-delay and even a sequence of delays will
-delay any other inputs from being processed until the fakekey-delays are all
-complete, so use with care.
-
-NOTE: You will likely want to use `+macro+` instead of fake keys with delays now
-that `+macro+` supports more actions.
-
-[source]
-----
-(dofalias
-  stm (multi ;; Shift -> middle mouse with a delay
-    (on-press-fakekey lsft press)
-    (on-press-fakekey-delay 200)
-    (on-press-fakekey mmid press)
-    (on-release-fakekey mmid release)
-    (on-release-fakekey-delay 200)
-    (on-release-fakekey lsft release)
-  )
-)
-----
 
 For more context, you can read the
 https://github.com/jtroo/kanata/issues/80[issue that sparked the creation of fake keys].
@@ -1822,6 +1820,16 @@ Something notable about fake keys is that they don't always interrupt the state
 of an active `+tap-dance-eager+`. If a `macro` action is assigned to a fake
 key, this won't interrupt a tap dance. However, most other action types,
 notably a "normal" key action like `+rsft+` will still interrupt a tap dance.
+
+==== Aside: broken delay action
+
+The implementation of the following actions are broken in many use cases:
+`on-press-fakekey-delay`, `on-release-fakekey-delay`.
+
+Because these actions exist and might otherwise be discovered anyway,
+it seems better to warn about it here in the documentation.
+You should use the `macro` action instead.
+The `macro` action can operate on fake keys.
 
 [[sequences]]
 === Sequences
@@ -2044,14 +2052,14 @@ One case is a triple of:
 
 - keys check
 - action: to activate if keys check succeeds
-- fallthrough|break: stop evaluating cases
+- `fallthrough|break`: choose to continue vs. stop evaluating cases
 
 The default use of keys check behaves similarly to fork.
 
 For example, the keys check `(a b c)` will activate the corresponding action
 if any of a, b, or c are currently pressed.
 
-The keys check also accepts the boolean operators and|or to allow more
+The keys check also accepts the boolean operators `and|or` to allow more
 complex use cases.
 
 The order of cases matters.

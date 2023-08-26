@@ -15,14 +15,114 @@ fn sizeof_action_is_two_usizes() {
 }
 
 #[test]
-fn span_works() {
+fn test_span_absolute_ranges() {
     let s = "(hello world my oyster)\n(row two)";
     let tlevel = parse(s, "test").unwrap();
     assert_eq!(
-        &s[tlevel[0].span.start..tlevel[0].span.end],
+        &s[tlevel[0].span.start()..tlevel[0].span.end()],
         "(hello world my oyster)"
     );
-    assert_eq!(&s[tlevel[1].span.start..tlevel[1].span.end], "(row two)");
+    assert_eq!(
+        &s[tlevel[1].span.start()..tlevel[1].span.end()],
+        "(row two)"
+    );
+}
+
+#[test]
+fn span_works_with_unicode_characters() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"(dofsrc a) ;; 😊
+(doflayer base @😊)
+"#;
+    let span = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .expect_err("should be an error because @😊 is not defined")
+    .span
+    .expect("span should be Some");
+
+    assert_eq!(&source[span.start()..span.end()], "@😊");
+
+    assert_eq!(span.start.line, 1);
+    assert_eq!(span.end.line, 1);
+
+    assert_eq!("😊".len(), 4);
+    assert_eq!("(dofsrc a) ;; 😊\n".len(), 19);
+    assert_eq!(span.start.line_beginning, 19);
+    assert_eq!(span.end.line_beginning, 19);
+}
+
+#[test]
+fn test_multiline_error_span() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"(dofsrc a)
+(
+  🍍
+  🍕
+)
+(dofalias a b)
+"#;
+    let span = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .expect_err("should error on unknown top level block")
+    .span
+    .expect("span should be Some");
+
+    assert_eq!(&source[span.start()..span.end()], "(\n  🍍\n  🍕\n)");
+
+    assert_eq!(span.start.line, 1);
+    assert_eq!(span.end.line, 4);
+
+    assert_eq!(span.start.line_beginning, "(dofsrc a)\n".len());
+    assert_eq!(span.end.line_beginning, "(dofsrc a)\n(\n  🍍\n  🍕\n".len());
+}
+
+#[test]
+fn test_span_of_an_unterminated_block_comment_error() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"(dofsrc a) |# I'm an unterminated block comment..."#;
+    let span = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .expect_err("should be an unterminated comment error")
+    .span
+    .expect("span should be Some");
+
+    assert_eq!(&source[span.start()..span.end()], "|#");
+
+    assert_eq!(span.start.line, 0);
+    assert_eq!(span.end.line, 0);
+
+    assert_eq!(span.start.line_beginning, 0);
+    assert_eq!(span.end.line_beginning, 0);
 }
 
 #[test]
@@ -94,12 +194,15 @@ fn parse_action_vars() {
 (dofchords $e $one $1 $two)
 (dofchords $e2 $one ($one) $two)
 "#;
-    parse_cfg_raw_string(source, &mut s, "test")
-        .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e));
-            ""
-        })
-        .unwrap();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -115,12 +218,15 @@ fn parse_delegate_to_default_layer_yes() {
 (doflayer base b)
 (doflayer other _)
 "#;
-    let res = parse_cfg_raw_string(source, &mut s, "test")
-        .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e));
-            ""
-        })
-        .unwrap();
+    let res = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .unwrap();
     assert_eq!(
         res.3[2][0][OsCode::KEY_A.as_u16() as usize],
         Action::KeyCode(KeyCode::B),
@@ -140,12 +246,15 @@ fn parse_delegate_to_default_layer_yes_but_base_transparent() {
 (doflayer base _)
 (doflayer other _)
 "#;
-    let res = parse_cfg_raw_string(source, &mut s, "test")
-        .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e));
-            ""
-        })
-        .unwrap();
+    let res = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .unwrap();
     assert_eq!(
         res.3[2][0][OsCode::KEY_A.as_u16() as usize],
         Action::KeyCode(KeyCode::A),
@@ -165,12 +274,15 @@ fn parse_delegate_to_default_layer_no() {
 (doflayer base b)
 (doflayer other _)
 "#;
-    let res = parse_cfg_raw_string(source, &mut s, "test")
-        .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e));
-            ""
-        })
-        .unwrap();
+    let res = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .unwrap();
     assert_eq!(
         res.3[2][0][OsCode::KEY_A.as_u16() as usize],
         Action::KeyCode(KeyCode::A),
@@ -519,10 +631,7 @@ fn test_include_bad_has_filename_included() {
         .map(|_| ())
         .unwrap_err()
     );
-    assert!(err.contains(&format!(
-        "test_cfgs{}included-bad.kbd",
-        std::path::MAIN_SEPARATOR
-    )));
+    assert!(err.contains("included-bad.kbd"));
     assert!(!err.contains(&format!(
         "test_cfgs{}include-bad.kbd",
         std::path::MAIN_SEPARATOR
@@ -556,7 +665,8 @@ fn test_include_bad2_has_original_filename() {
 }
 
 #[test]
-fn parse_submacro() {
+fn parse_bad_submacro() {
+    // Test exists since it used to crash. It should not crash.
     let _lk = match CFG_PARSE_LOCK.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -565,15 +675,51 @@ fn parse_submacro() {
     let source = r#"
 (dofsrc a)
 (doflayer base
-  (macro M-S-())
+  (macro M-s-())
 )
 "#;
-    parse_cfg_raw_string(source, &mut s, "test")
-        .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e));
-            ""
-        })
-        .unwrap_err();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|e| {
+        eprintln!("{:?}", e);
+        ""
+    })
+    .unwrap_err();
+}
+
+#[test]
+fn parse_bad_submacro_2() {
+    // Test exists since it used to crash. It should not crash.
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofsrc a)
+(doflayer base
+  (macro M-s-g)
+)
+"#;
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|e| {
+        eprintln!("{:?}", e);
+        ""
+    })
+    .unwrap_err();
 }
 
 #[test]
@@ -595,12 +741,15 @@ fn parse_switch() {
   )
 )
 "#;
-    let res = parse_cfg_raw_string(source, &mut s, "test")
-        .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e));
-            ""
-        })
-        .unwrap();
+    let res = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .unwrap();
     assert_eq!(
         res.3[0][0][OsCode::KEY_A.as_u16() as usize],
         Action::Switch(&Switch {
@@ -664,10 +813,194 @@ fn parse_switch_exceed_depth() {
   )
 )
 "#;
-    parse_cfg_raw_string(source, &mut s, "test")
-        .map_err(|e| {
-            eprintln!("{:?}", error_with_source(e));
-            ""
-        })
-        .unwrap_err();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|_e| {
+        // uncomment to see what this looks like when running test
+        // eprintln!("{:?}", _e);
+        ""
+    })
+    .unwrap_err();
+}
+
+#[test]
+fn parse_on_idle_fakekey() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofvar var1 a)
+(dofsrc a)
+(doffakekeys hello a)
+(doflayer base
+  (on-idle-fakekey hello tap 200)
+)
+"#;
+    let res = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|_e| {
+        // uncomment to see what this looks like when running test
+        eprintln!("{:?}", _e);
+        ""
+    })
+    .unwrap();
+    assert_eq!(
+        res.3[0][0][OsCode::KEY_A.as_u16() as usize],
+        Action::Custom(
+            &[&CustomAction::FakeKeyOnIdle(FakeKeyOnIdle {
+                coord: Coord { x: 1, y: 0 },
+                action: FakeKeyAction::Tap,
+                idle_duration: 200
+            })]
+            .as_ref()
+        ),
+    );
+}
+
+#[test]
+fn parse_on_idle_fakekey_errors() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofvar var1 a)
+(dofsrc a)
+(doffakekeys hello a)
+(doflayer base
+  (on-idle-fakekey hello bap 200)
+)
+"#;
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|_e| {
+        // comment out to see what this looks like when running test
+        // eprintln!("{:?}", _e);
+        ""
+    })
+    .unwrap_err();
+
+    let source = r#"
+(dofvar var1 a)
+(dofsrc a)
+(doffakekeys hello a)
+(doflayer base
+  (on-idle-fakekey jello tap 200)
+)
+"#;
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|_e| {
+        // uncomment to see what this looks like when running test
+        // eprintln!("{:?}", _e);
+        ""
+    })
+    .unwrap_err();
+
+    let source = r#"
+(dofvar var1 a)
+(dofsrc a)
+(doffakekeys hello a)
+(doflayer base
+  (on-idle-fakekey (hello) tap 200)
+)
+"#;
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|_e| {
+        // uncomment to see what this looks like when running test
+        // eprintln!("{:?}", _e);
+        ""
+    })
+    .unwrap_err();
+
+    let source = r#"
+(dofvar var1 a)
+(dofsrc a)
+(doffakekeys hello a)
+(doflayer base
+  (on-idle-fakekey hello tap -1)
+)
+"#;
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+    )
+    .map_err(|_e| {
+        // uncomment to see what this looks like when running test
+        // eprintln!("{:?}", _e);
+        ""
+    })
+    .unwrap_err();
+}
+
+#[test]
+fn parse_fake_keys_errors_on_too_many() {
+    let mut s = ParsedState::default();
+    let mut checked_for_err = false;
+    for n in 0..1000 {
+        let exprs = [&vec![
+            SExpr::Atom(Spanned {
+                t: "doffakekeys".to_string(),
+                span: Default::default(),
+            }),
+            SExpr::Atom(Spanned {
+                t: "a".repeat(n),
+                span: Default::default(),
+            }),
+            SExpr::Atom(Spanned {
+                t: "a".to_string(),
+                span: Default::default(),
+            }),
+        ]];
+        if n < 500 {
+            // fill up fake keys, expect first bunch to succeed
+            parse_fake_keys(&exprs, &mut s).unwrap();
+        } else if n < 999 {
+            // at some point they start failing, ignore result
+            let _ = parse_fake_keys(&exprs, &mut s);
+        } else {
+            // last iteration, check for error. probably happened before this, but just check here
+            let _ = parse_fake_keys(&exprs, &mut s).unwrap_err();
+            checked_for_err = true;
+        }
+    }
+    assert!(checked_for_err);
 }

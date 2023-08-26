@@ -45,6 +45,8 @@ pub fn replace_custom_str_oscode_mapping(mapping: &HashMap<String, OsCode>) {
 pub fn clear_custom_str_oscode_mapping() {
     let mut local_mapping = CUSTOM_STRS_TO_OSCODES.lock();
     local_mapping.clear();
+    add_default_str_osc_mappings(&mut local_mapping);
+    local_mapping.shrink_to_fit();
 }
 
 /// Used for backwards compatibility. If there is hardcoded key name in `str_to_oscode` that would
@@ -66,6 +68,10 @@ fn add_default_str_osc_mappings(mapping: &mut HashMap<String, OsCode>) {
         (",", OsCode::KEY_COMMA),
         (".", OsCode::KEY_DOT),
         ("\\", OsCode::KEY_BACKSLASH),
+        // Mapped as backslash because in some locales/fonts, yen=backslash
+        ("yen", OsCode::KEY_BACKSLASH),
+        // Unicode yen is probably the yen key, so map this to a separate oscode by default.
+        ("¥", OsCode::KEY_YEN),
     ];
     for dm in default_mappings {
         mapping.entry(dm.0.into()).or_insert(dm.1);
@@ -109,7 +115,7 @@ pub fn str_to_oscode(s: &str) -> Option<OsCode> {
         "p" => OsCode::KEY_P,
         "lbrc" => OsCode::KEY_LEFTBRACE,
         "rbrc" => OsCode::KEY_RIGHTBRACE,
-        "bksl" | "yen" | "¥" => OsCode::KEY_BACKSLASH,
+        "bksl" => OsCode::KEY_BACKSLASH,
         "caps" => OsCode::KEY_CAPSLOCK,
         "a" => OsCode::KEY_A,
         "s" => OsCode::KEY_S,

@@ -140,6 +140,10 @@ pub struct Kanata {
     /// Config items from `dofcfg`.
     #[cfg(target_os = "linux")]
     pub dofcfg_items: HashMap<String, String>,
+    /// Fake key actions that are waiting for a certain duration of keyboard idling.
+    pub waiting_for_idle: HashSet<FakeKeyOnIdle>,
+    /// Number of ticks since kanata was idle.
+    pub ticks_since_idle: u16,
 }
 
 pub struct ScrollState {
@@ -343,6 +347,8 @@ impl Kanata {
             caps_word: None,
             #[cfg(target_os = "linux")]
             dofcfg_items: cfg.items,
+            waiting_for_idle: HashSet::default(),
+            ticks_since_idle: 0,
         })
     }
 
@@ -387,6 +393,7 @@ impl Kanata {
     fn handle_key_event(&mut self, event: &KeyEvent) -> Result<()> {
         log::debug!("process recv ev {event:?}");
         let evc: u16 = event.code.into();
+        self.ticks_since_idle = 0;
         let kbrn_ev = match event.value {
             KeyValue::Press => {
                 if let Some(state) = &mut self.dynamic_macro_record_state {
@@ -412,7 +419,8 @@ impl Kanata {
     }
 
     /// Advance keyberon layout state and send events based on changes to its state.
-    fn handle_time_ticks(&mut self, tx: &Option<Sender<ServerMessage>>) -> Result<()> {
+    /// Returns the number of ticks that elapsed.
+    fn handle_time_ticks(&mut self, tx: &Option<Sender<ServerMessage>>) -> Result<u16> {
         const NS_IN_MS: u128 = 1_000_000;
         let now = time::Instant::now();
         let ns_elapsed = now.duration_since(self.last_tick).as_nanos();
@@ -426,13 +434,7 @@ impl Kanata {
             self.handle_move_mouse()?;
             self.tick_sequence_state()?;
             self.tick_dynamic_macro_state()?;
-
-            if self.live_reload_requested && self.prev_keys.is_empty() && self.cur_keys.is_empty() {
-                self.live_reload_requested = false;
-                if let Err(e) = self.do_live_reload() {
-                    log::error!("live reload failed {e}");
-                }
-            }
+            self.tick_idle_timeout();
 
             self.prev_keys.clear();
             self.prev_keys.append(&mut self.cur_keys);
@@ -456,7 +458,31 @@ impl Kanata {
             self.check_handle_layer_change(tx);
         }
 
-        Ok(())
+        if self.live_reload_requested
+            && ((self.prev_keys.is_empty() && self.cur_keys.is_empty())
+                || self.ticks_since_idle > 1000)
+        {
+            // Note regarding the ticks_since_idle check above:
+            // After 1 second if live reload is still not done, there might be a key in a stuck
+            // state. One known instance where this happens is Win+L to lock the screen in
+            // Windows with the LLHOOK mechanism. The release of Win and L keys will not be
+            // caught by the kanata process when on the lock screen. However, the OS knows that
+            // these keys have released - only the kanata state is wrong. And since kanata has
+            // a key in a stuck state, without this 1s fallback, live reload would never
+            // activate. Having this fallback allows live reload to happen which resets the
+            // kanata states.
+            self.live_reload_requested = false;
+            if let Err(e) = self.do_live_reload() {
+                log::error!("live reload failed {e}");
+            }
+        }
+
+        #[cfg(feature = "perf_logging")]
+        log::info!("ms elapsed: {ms_elapsed}");
+        // Note regarding `as` casting. It doesn't really matter if the result would truncate and
+        // end up being wrong. Prefer to do the cheaper operation, as compared to doing the min of
+        // u16::MAX and ms_elapsed.
+        Ok(ms_elapsed as u16)
     }
 
     fn handle_scrolling(&mut self) -> Result<()> {
@@ -568,6 +594,23 @@ impl Kanata {
             self.dynamic_macro_replay_state = None;
         }
         Ok(())
+    }
+
+    fn tick_idle_timeout(&mut self) {
+        if self.waiting_for_idle.is_empty() {
+            return;
+        }
+        self.waiting_for_idle.retain(|wfd| {
+            if self.ticks_since_idle >= wfd.idle_duration {
+                // Process this and return false so that it is not retained.
+                let layout = self.layout.bm();
+                let Coord { x, y } = wfd.coord;
+                handle_fakekey_action(wfd.action, layout, x, y);
+                false
+            } else {
+                true
+            }
+        })
     }
 
     /// Sends OS key events according to the change in key state between the current and the
@@ -941,14 +984,7 @@ impl Kanata {
                                 layout.default_layer,
                                 layout.layers[layout.default_layer][x as usize][y as usize]
                             );
-                            match action {
-                                FakeKeyAction::Press => layout.event(Event::Press(x, y)),
-                                FakeKeyAction::Release => layout.event(Event::Release(x, y)),
-                                FakeKeyAction::Tap => {
-                                    layout.event(Event::Press(x, y));
-                                    layout.event(Event::Release(x, y));
-                                }
-                            }
+                            handle_fakekey_action(*action, layout, x, y);
                         }
                         CustomAction::Delay(delay) => {
                             log::debug!("on-press: sleeping for {delay} ms");
@@ -1110,6 +1146,10 @@ impl Kanata {
                         CustomAction::FakeKeyOnRelease { .. }
                         | CustomAction::DelayOnRelease(_)
                         | CustomAction::CancelMacroOnRelease => {}
+                        CustomAction::FakeKeyOnIdle(fkd) => {
+                            self.ticks_since_idle = 0;
+                            self.waiting_for_idle.insert(*fkd);
+                        }
                     }
                 }
                 #[cfg(feature = "cmd")]
@@ -1209,14 +1249,7 @@ impl Kanata {
                         CustomAction::FakeKeyOnRelease { coord, action } => {
                             let (x, y) = (coord.x, coord.y);
                             log::debug!("fake key on release {action:?} {x:?},{y:?}");
-                            match action {
-                                FakeKeyAction::Press => layout.event(Event::Press(x, y)),
-                                FakeKeyAction::Release => layout.event(Event::Release(x, y)),
-                                FakeKeyAction::Tap => {
-                                    layout.event(Event::Press(x, y));
-                                    layout.event(Event::Release(x, y));
-                                }
-                            }
+                            handle_fakekey_action(*action, layout, x, y);
                             pbtn
                         }
                         CustomAction::CancelMacroOnRelease => {
@@ -1411,17 +1444,79 @@ impl Kanata {
                     std::thread::sleep(time::Duration::from_millis(1));
                 }
             }
+            let mut ms_elapsed = 0;
 
             info!("Starting kanata proper");
             let err = loop {
-                if kanata.lock().can_block() {
+                let can_block = {
+                    let mut k = kanata.lock();
+                    let is_idle = k.is_idle();
+                    // Note: checking waiting_for_idle can not be part of the computation for
+                    // is_idle() since incrementing ticks_since_idle is dependent on the return
+                    // value of is_idle().
+                    let counting_idle_ticks =
+                        !k.waiting_for_idle.is_empty() || k.live_reload_requested;
+                    if !is_idle {
+                        k.ticks_since_idle = 0;
+                    } else if is_idle && counting_idle_ticks {
+                        k.ticks_since_idle = k.ticks_since_idle.saturating_add(ms_elapsed);
+                        #[cfg(feature = "perf_logging")]
+                        log::info!("ticks since idle: {}", k.ticks_since_idle);
+                    }
+                    is_idle && !counting_idle_ticks
+                };
+                if can_block {
                     log::trace!("blocking on channel");
                     match rx.recv() {
                         Ok(kev) => {
                             let mut k = kanata.lock();
-                            k.last_tick = time::Instant::now()
+                            let now = time::Instant::now()
                                 .checked_sub(time::Duration::from_millis(1))
                                 .expect("subtract 1ms from current time");
+                            #[cfg(all(
+                                not(feature = "interception_driver"),
+                                target_os = "windows"
+                            ))]
+                            {
+                                // If kanata has been blocking for long enough, clear all states.
+                                // This won't trigger if there are macros running, or if a key is
+                                // held down for a long time and is sending OS repeats. The reason
+                                // for this code is in case like Win+L which locks the Windows
+                                // desktop. When this happens, the Win key and L key will be stuck
+                                // as pressed in the kanata state because LLHOOK kanata cannot read
+                                // keys in the lock screen or administrator applications. So this
+                                // is heuristic to detect such an issue and clear states assuming
+                                // that's what happened.
+                                //
+                                // Only states in the normal key row are cleared, since those are
+                                // the states that might be stuck. A real use case might be to have
+                                // a fake key pressed for a long period of time, so make sure those
+                                // are not cleared.
+                                if (now - k.last_tick) > time::Duration::from_secs(60) {
+                                    log::debug!(
+                                        "clearing keyberon normal key states due to blocking for a while"
+                                    );
+                                    k.layout.bm().states.retain(|s| {
+                                        !matches!(
+                                            s,
+                                            State::NormalKey {
+                                                coord: (NORMAL_KEY_ROW, _),
+                                                ..
+                                            } | State::LayerModifier {
+                                                coord: (NORMAL_KEY_ROW, _),
+                                                ..
+                                            } | State::Custom {
+                                                coord: (NORMAL_KEY_ROW, _),
+                                                ..
+                                            } | State::RepeatingSequence {
+                                                coord: (NORMAL_KEY_ROW, _),
+                                                ..
+                                            }
+                                        )
+                                    });
+                                }
+                            }
+                            k.last_tick = now;
 
                             #[cfg(feature = "perf_logging")]
                             let start = std::time::Instant::now();
@@ -1438,9 +1533,10 @@ impl Kanata {
                             #[cfg(feature = "perf_logging")]
                             let start = std::time::Instant::now();
 
-                            if let Err(e) = k.handle_time_ticks(&tx) {
-                                break e;
-                            }
+                            match k.handle_time_ticks(&tx) {
+                                Ok(ms) => ms_elapsed = ms,
+                                Err(e) => break e,
+                            };
 
                             #[cfg(feature = "perf_logging")]
                             log::info!(
@@ -1472,9 +1568,10 @@ impl Kanata {
                             #[cfg(feature = "perf_logging")]
                             let start = std::time::Instant::now();
 
-                            if let Err(e) = k.handle_time_ticks(&tx) {
-                                break e;
-                            }
+                            match k.handle_time_ticks(&tx) {
+                                Ok(ms) => ms_elapsed = ms,
+                                Err(e) => break e,
+                            };
 
                             #[cfg(feature = "perf_logging")]
                             log::info!(
@@ -1486,9 +1583,10 @@ impl Kanata {
                             #[cfg(feature = "perf_logging")]
                             let start = std::time::Instant::now();
 
-                            if let Err(e) = k.handle_time_ticks(&tx) {
-                                break e;
-                            }
+                            match k.handle_time_ticks(&tx) {
+                                Ok(ms) => ms_elapsed = ms,
+                                Err(e) => break e,
+                            };
 
                             #[cfg(feature = "perf_logging")]
                             log::info!(
@@ -1510,7 +1608,9 @@ impl Kanata {
         });
     }
 
-    pub fn can_block(&self) -> bool {
+    pub fn is_idle(&self) -> bool {
+        let pressed_keys_means_not_idle =
+            !self.waiting_for_idle.is_empty() || self.live_reload_requested;
         self.layout.b().queue.is_empty()
             && self.layout.b().waiting.is_none()
             && self.layout.b().last_press_tracker.tap_hold_timeout == 0
@@ -1525,12 +1625,10 @@ impl Kanata {
             && self.move_mouse_state_horizontal.is_none()
             && self.dynamic_macro_replay_state.is_none()
             && self.caps_word.is_none()
-            && !self
-                .layout
-                .b()
-                .states
-                .iter()
-                .any(|s| matches!(s, State::SeqCustomPending(_) | State::SeqCustomActive(_)))
+            && !self.layout.b().states.iter().any(|s| {
+                matches!(s, State::SeqCustomPending(_) | State::SeqCustomActive(_))
+                    || (pressed_keys_means_not_idle && matches!(s, State::NormalKey { .. }))
+            })
     }
 }
 
@@ -1665,4 +1763,38 @@ fn cancel_sequence(state: &SequenceState, kbd_out: &mut KbdOut) -> Result<()> {
         SequenceInputMode::HiddenSuppressed | SequenceInputMode::VisibleBackspaced => {}
     }
     Ok(())
+}
+
+fn handle_fakekey_action<'a, const C: usize, const R: usize, const L: usize, T>(
+    action: FakeKeyAction,
+    layout: &mut Layout<'a, C, R, L, T>,
+    x: u8,
+    y: u16,
+) where
+    T: 'a + std::fmt::Debug + Copy,
+{
+    match action {
+        FakeKeyAction::Press => layout.event(Event::Press(x, y)),
+        FakeKeyAction::Release => layout.event(Event::Release(x, y)),
+        FakeKeyAction::Tap => {
+            layout.event(Event::Press(x, y));
+            layout.event(Event::Release(x, y));
+        }
+        FakeKeyAction::Toggle => {
+            match states_has_coord(&layout.states, x, y) {
+                true => layout.event(Event::Release(x, y)),
+                false => layout.event(Event::Press(x, y)),
+            };
+        }
+    };
+}
+
+fn states_has_coord<T>(states: &[State<T>], x: u8, y: u16) -> bool {
+    states.iter().any(|s| match s {
+        State::NormalKey { coord, .. }
+        | State::LayerModifier { coord, .. }
+        | State::Custom { coord, .. }
+        | State::RepeatingSequence { coord, .. } => *coord == (x, y),
+        _ => false,
+    })
 }

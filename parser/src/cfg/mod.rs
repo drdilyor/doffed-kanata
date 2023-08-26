@@ -53,12 +53,13 @@ use crate::keys::*;
 use crate::layers::*;
 
 mod error;
-use error::*;
+pub use error::*;
 
 use crate::trie::Trie;
 use anyhow::anyhow;
 use std::collections::hash_map::Entry;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 type HashSet<T> = rustc_hash::FxHashSet<T>;
@@ -79,47 +80,66 @@ pub use sexpr::parse;
 
 macro_rules! bail {
     ($err:expr $(,)?) => {
-        return Err(CfgError::from(anyhow!($err)))
+        return Err(ParseError::from(anyhow!($err)))
     };
     ($fmt:expr, $($arg:tt)*) => {
-        return Err(CfgError::from(anyhow!($fmt, $($arg)*)))
+        return Err(ParseError::from(anyhow!($fmt, $($arg)*)))
     };
 }
 
 macro_rules! bail_expr {
     ($expr:expr, $fmt:expr $(,)?) => {
-        return Err(error_expr($expr, format!($fmt)))
+        return Err(ParseError::from_expr($expr, format!($fmt)))
     };
     ($expr:expr, $fmt:expr, $($arg:tt)*) => {
-        return Err(error_expr($expr, format!($fmt, $($arg)*)))
+        return Err(ParseError::from_expr($expr, format!($fmt, $($arg)*)))
     };
 }
 
 macro_rules! bail_span {
     ($expr:expr, $fmt:expr $(,)?) => {
-        return Err(error_spanned($expr, format!($fmt)))
+        return Err(ParseError::from_spanned($expr, format!($fmt)))
     };
     ($expr:expr, $fmt:expr, $($arg:tt)*) => {
-        return Err(error_spanned($expr, format!($fmt, $($arg)*)))
+        return Err(ParseError::from_spanned($expr, format!($fmt, $($arg)*)))
     };
 }
 
 macro_rules! anyhow_expr {
     ($expr:expr, $fmt:expr $(,)?) => {
-        error_expr($expr, format!($fmt))
+        ParseError::from_expr($expr, format!($fmt))
     };
     ($expr:expr, $fmt:expr, $($arg:tt)*) => {
-        error_expr($expr, format!($fmt, $($arg)*))
+        ParseError::from_expr($expr, format!($fmt, $($arg)*))
     };
 }
 
 macro_rules! anyhow_span {
     ($expr:expr, $fmt:expr $(,)?) => {
-        error_spanned($expr, format!($fmt))
+        ParseError::from_spanned($expr, format!($fmt))
     };
     ($expr:expr, $fmt:expr, $($arg:tt)*) => {
-        error_spanned($expr, format!($fmt, $($arg)*))
+        ParseError::from_spanned($expr, format!($fmt, $($arg)*))
     };
+}
+
+pub struct FileContentProvider<'a> {
+    /// A function to load content of a file from a filepath.
+    /// Optionally, it could implement caching and a mechanism preventing "file" and "./file" from loading twice.
+    get_file_content_fn: &'a mut dyn FnMut(&Path) -> std::result::Result<String, String>,
+}
+
+impl<'a> FileContentProvider<'a> {
+    pub fn new(
+        get_file_content_fn: &'a mut impl FnMut(&Path) -> std::result::Result<String, String>,
+    ) -> Self {
+        Self {
+            get_file_content_fn,
+        }
+    }
+    pub fn get_file_content(&mut self, filename: &Path) -> std::result::Result<String, String> {
+        (self.get_file_content_fn)(filename)
+    }
 }
 
 pub type KanataAction = Action<'static, &'static &'static [&'static CustomAction]>;
@@ -177,7 +197,7 @@ pub struct Cfg {
 }
 
 /// Parse a new configuration from a file.
-pub fn new_from_file(p: &std::path::Path) -> MResult<Cfg> {
+pub fn new_from_file(p: &Path) -> MResult<Cfg> {
     let (items, mapped_keys, layer_info, key_outputs, layout, sequences, overrides) = parse_cfg(p)?;
     log::info!("config parsed");
     Ok(Cfg {
@@ -205,7 +225,7 @@ pub struct LayerInfo {
 
 #[allow(clippy::type_complexity)] // return type is not pub
 fn parse_cfg(
-    p: &std::path::Path,
+    p: &Path,
 ) -> MResult<(
     HashMap<String, String>,
     MappedKeys,
@@ -241,7 +261,7 @@ const DEF_LOCAL_KEYS: &str = "doflocalkeys-linux";
 
 #[allow(clippy::type_complexity)] // return type is not pub
 fn parse_cfg_raw(
-    p: &std::path::Path,
+    p: &Path,
     s: &mut ParsedState,
 ) -> MResult<(
     HashMap<String, String>,
@@ -251,12 +271,57 @@ fn parse_cfg_raw(
     KeySeqsToFKeys,
     Overrides,
 )> {
-    let text = std::fs::read_to_string(p).map_err(|e| miette::miette!("{e}"))?;
-    let cfg_filename = p.to_string_lossy().to_string();
-    parse_cfg_raw_string(&text, s, &cfg_filename).map_err(error_with_source)
+    const INVALID_PATH_ERROR: &str = "The provided config file path is not valid";
+
+    let mut loaded_files: HashSet<PathBuf> = HashSet::default();
+
+    let mut get_file_content_fn_impl = |filepath: &Path| {
+        // Make the include paths relative to main config file instead of kanata executable.
+        let filepath_relative_to_loaded_kanata_cfg = if filepath.is_absolute() {
+            filepath.to_owned()
+        } else {
+            let relative_main_cfg_file_dir = p.parent().ok_or(INVALID_PATH_ERROR)?;
+            relative_main_cfg_file_dir.join(filepath)
+        };
+
+        // Forbid loading the same file multiple times.
+        // This prevents a potential recursive infinite loop of includes
+        // (if includes within includes were to be allowed).
+        let abs_filepath: PathBuf = filepath_relative_to_loaded_kanata_cfg
+            .canonicalize()
+            .map_err(|e| {
+                format!(
+                    "Failed to resolve absolute path: {}: {}",
+                    filepath_relative_to_loaded_kanata_cfg.to_string_lossy(),
+                    e
+                )
+            })?;
+        if !loaded_files.insert(abs_filepath.clone()) {
+            return Err("The provided config file was already included before".to_string());
+        };
+
+        std::fs::read_to_string(abs_filepath.to_str().ok_or(INVALID_PATH_ERROR)?)
+            .map_err(|e| format!("Failed to include file: {e}"))
+    };
+    let mut file_content_provider = FileContentProvider::new(&mut get_file_content_fn_impl);
+
+    // `get_file_content_fn_impl` already uses CWD of the main config path,
+    // so we need to provide only the name, not the whole path.
+    let cfg_file_name: PathBuf = p
+        .file_name()
+        .ok_or_else(|| miette::miette!(INVALID_PATH_ERROR))?
+        .into();
+    let text = file_content_provider
+        .get_file_content(&cfg_file_name)
+        .map_err(|e| miette::miette!(e))?;
+
+    parse_cfg_raw_string(&text, s, p, &mut file_content_provider).map_err(|e| e.into())
 }
 
-fn expand_includes(xs: Vec<TopLevel>, main_config_filepath: &str) -> Result<Vec<TopLevel>> {
+fn expand_includes(
+    xs: Vec<TopLevel>,
+    file_content_provider: &mut FileContentProvider,
+) -> Result<Vec<TopLevel>> {
     let include_is_first_atom = gen_first_atom_filter("include");
     xs.iter().try_fold(Vec::new(), |mut acc, spanned_exprs| {
         if include_is_first_atom(&&spanned_exprs.t) {
@@ -281,22 +346,9 @@ fn expand_includes(xs: Vec<TopLevel>, main_config_filepath: &str) -> Result<Vec<
                     "Multiple filepaths are not allowed in include blocks. If you want to include multiple files, create a new include block for each of them."
                 )
             };
-
-            let original_include_filepath = Path::new(spanned_filepath.t.trim_matches('"'));
-
-            // Make the include_filepath relative to main config file instead of kanata executable.
-            let final_include_filepath = if original_include_filepath.is_absolute() {
-                original_include_filepath.to_str().ok_or_else(|| anyhow_span!(spanned_filepath, "The provided path is not valid"))?.to_owned()
-            } else {
-                let parent = Path::new(main_config_filepath).parent().expect("should be validated before");
-                let a = parent.join(original_include_filepath);
-                a.to_string_lossy().into_owned()
-            };
-
-            let file_content = std::fs::read_to_string(&final_include_filepath).map_err(|e|
-                anyhow_span!(spanned_filepath, "Failed to include file: {e}")
-            )?;
-            let tree = sexpr::parse(&file_content, &final_include_filepath)?;
+            let include_file_path = spanned_filepath.t.trim_matches('"');
+            let file_content = file_content_provider.get_file_content(Path::new(include_file_path)).map_err(|e| anyhow_span!(spanned_filepath, "{e}"))?;
+            let tree = sexpr::parse(&file_content, include_file_path)?;
             acc.extend(tree);
 
             Ok(acc)
@@ -308,10 +360,11 @@ fn expand_includes(xs: Vec<TopLevel>, main_config_filepath: &str) -> Result<Vec<
 }
 
 #[allow(clippy::type_complexity)] // return type is not pub
-fn parse_cfg_raw_string(
+pub fn parse_cfg_raw_string(
     text: &str,
     s: &mut ParsedState,
-    cfg_filename: &str,
+    cfg_path: &Path,
+    file_content_provider: &mut FileContentProvider,
 ) -> Result<(
     HashMap<String, String>,
     MappedKeys,
@@ -320,11 +373,9 @@ fn parse_cfg_raw_string(
     KeySeqsToFKeys,
     Overrides,
 )> {
-    let spanned_root_exprs =
-        sexpr::parse(text, cfg_filename).and_then(|xs| expand_includes(xs, cfg_filename))?;
+    let spanned_root_exprs = sexpr::parse(text, &cfg_path.to_string_lossy())
+        .and_then(|xs| expand_includes(xs, file_content_provider))?;
 
-    // NOTE: If nested included were to be allowed in the future,
-    // a mechanism preventing circular includes should be incorporated.
     if let Some(spanned) = spanned_root_exprs
         .iter()
         .find(gen_first_atom_filter_spanned("include"))
@@ -353,22 +404,37 @@ fn parse_cfg_raw_string(
         )
     }
 
-    if let Some(result) = root_exprs
-        .iter()
-        .find(gen_first_atom_filter(DEF_LOCAL_KEYS))
-        .map(|custom_keys| parse_deflocalkeys(custom_keys))
-    {
-        result?;
+    let mut local_keys: Option<HashMap<String, OsCode>> = None;
+    clear_custom_str_oscode_mapping();
+    for def_local_keys_variant in [
+        "doflocalkeys-win",
+        "doflocalkeys-wintercept",
+        "doflocalkeys-linux",
+    ] {
+        if let Some(result) = root_exprs
+            .iter()
+            .find(gen_first_atom_filter(def_local_keys_variant))
+            .map(|custom_keys| parse_deflocalkeys(def_local_keys_variant, custom_keys))
+        {
+            let mapping = result?;
+            if def_local_keys_variant == DEF_LOCAL_KEYS {
+                local_keys = Some(mapping);
+            }
+        }
+
+        if let Some(spanned) = spanned_root_exprs
+            .iter()
+            .filter(gen_first_atom_filter_spanned(def_local_keys_variant))
+            .nth(1)
+        {
+            bail_span!(
+                spanned,
+                "Only one {def_local_keys_variant} is allowed, found more. Delete the extras."
+            )
+        }
     }
-    if let Some(spanned) = spanned_root_exprs
-        .iter()
-        .filter(gen_first_atom_filter_spanned(DEF_LOCAL_KEYS))
-        .nth(1)
-    {
-        bail_span!(
-            spanned,
-            "Only one {DEF_LOCAL_KEYS} is allowed, found more. Delete the extras."
-        )
+    if let Some(mapping) = local_keys {
+        replace_custom_str_oscode_mapping(&mapping);
     }
 
     let src_expr = root_exprs
@@ -731,44 +797,49 @@ fn parse_defcfg(expr: &[SExpr]) -> Result<HashMap<String, String>> {
     }
 }
 
-/// Parse custom keys from an expression starting with doflocalkeys. Statefully updates the `keys`
-/// module using the custom keys parsed.
-fn parse_deflocalkeys(expr: &[SExpr]) -> Result<()> {
+/// Parse custom keys from an expression starting with doflocalkeys.
+fn parse_deflocalkeys(
+    def_local_keys_variant: &str,
+    expr: &[SExpr],
+) -> Result<HashMap<String, OsCode>> {
     let mut cfg = HashMap::default();
-    let mut exprs = check_first_expr(expr.iter(), DEF_LOCAL_KEYS)?;
-    clear_custom_str_oscode_mapping();
+    let mut exprs = check_first_expr(expr.iter(), def_local_keys_variant)?;
     // Read k-v pairs from the configuration
     while let Some(key_expr) = exprs.next() {
-        let key = key_expr
-            .atom(None)
-            .ok_or_else(|| anyhow_expr!(key_expr, "No lists are allowed in {DEF_LOCAL_KEYS}"))?;
+        let key = key_expr.atom(None).ok_or_else(|| {
+            anyhow_expr!(key_expr, "No lists are allowed in {def_local_keys_variant}")
+        })?;
         if str_to_oscode(key).is_some() {
             bail_expr!(
                 key_expr,
-                "Cannot use {key} in {DEF_LOCAL_KEYS} because it is a default key name"
+                "Cannot use {key} in {def_local_keys_variant} because it is a default key name"
             );
         } else if cfg.contains_key(key) {
-            bail_expr!(key_expr, "Duplicate {key} found in {DEF_LOCAL_KEYS}");
+            bail_expr!(
+                key_expr,
+                "Duplicate {key} found in {def_local_keys_variant}"
+            );
         }
         let osc = match exprs.next() {
             Some(v) => v
                 .atom(None)
-                .ok_or_else(|| anyhow_expr!(v, "No lists are allowed in {DEF_LOCAL_KEYS}"))
+                .ok_or_else(|| anyhow_expr!(v, "No lists are allowed in {def_local_keys_variant}"))
                 .and_then(|osc| {
-                    osc.parse::<u16>()
-                        .map_err(|_| anyhow_expr!(v, "Unknown number in {DEF_LOCAL_KEYS}: {osc}"))
+                    osc.parse::<u16>().map_err(|_| {
+                        anyhow_expr!(v, "Unknown number in {def_local_keys_variant}: {osc}")
+                    })
                 })
                 .and_then(|osc| {
-                    OsCode::from_u16(osc)
-                        .ok_or_else(|| anyhow_expr!(v, "Unknown number in {DEF_LOCAL_KEYS}: {osc}"))
+                    OsCode::from_u16(osc).ok_or_else(|| {
+                        anyhow_expr!(v, "Unknown number in {def_local_keys_variant}: {osc}")
+                    })
                 })?,
-            None => bail_expr!(key_expr, "Key without a number in {DEF_LOCAL_KEYS}"),
+            None => bail_expr!(key_expr, "Key without a number in {def_local_keys_variant}"),
         };
         log::debug!("custom mapping: {key} {}", osc.as_u16());
         cfg.insert(key.to_owned(), osc);
     }
-    replace_custom_str_oscode_mapping(&cfg);
-    Ok(())
+    Ok(cfg)
 }
 
 /// Parse mapped keys from an expression starting with dofsrc. Returns the key mapping as well as
@@ -853,7 +924,7 @@ fn parse_layer_indexes(exprs: &[Spanned<Vec<SExpr>>], expected_len: usize) -> Re
 }
 
 #[derive(Debug)]
-struct ParsedState {
+pub struct ParsedState {
     layer_exprs: Vec<Vec<SExpr>>,
     aliases: Aliases,
     layer_idxs: LayerIndexes,
@@ -1032,11 +1103,9 @@ fn parse_action(expr: &SExpr, s: &ParsedState) -> Result<&'static KanataAction> 
                 .expect("must be atom or list")
         })
         .map_err(|mut e| {
-            if e.err_span.is_none() {
-                e.err_span = Some(expr_err_span(expr));
-                e.file_name = Some(expr.span().file_name());
-                e.file_content = Some(expr.span().file_content());
-            }
+            if e.span.is_none() {
+                e.span = Some(expr.span())
+            };
             e
         })
 }
@@ -1208,6 +1277,7 @@ fn parse_action_list(ac: &[SExpr], s: &ParsedState) -> Result<&'static KanataAct
         "on-release-fakekey" => parse_on_release_fake_key_op(&ac[1..], s),
         "on-press-fakekey-delay" => parse_fake_key_delay(&ac[1..], s),
         "on-release-fakekey-delay" => parse_on_release_fake_key_delay(&ac[1..], s),
+        "on-idle-fakekey" => parse_on_idle_fakekey(&ac[1..], s),
         "mwheel-up" => parse_mwheel(&ac[1..], MWheelDirection::Up, s),
         "mwheel-down" => parse_mwheel(&ac[1..], MWheelDirection::Down, s),
         "mwheel-left" => parse_mwheel(&ac[1..], MWheelDirection::Left, s),
@@ -1451,7 +1521,7 @@ fn parse_multi(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAc
     Ok(s.a.sref(Action::MultipleActions(s.a.sref(s.a.sref_vec(actions)))))
 }
 
-const MACRO_ERR: &str = "Action macro only accepts delays, keys, chords, and chorded sub-macros";
+const MACRO_ERR: &str = "Action macro only accepts delays, keys, chords, chorded sub-macros, and a subset of special actions.\nThe macro section of the documentation describes this in more detail:\nhttps://github.com/jtroo/kanata/blob/main/docs/config.adoc#macro";
 enum RepeatMacro {
     Yes,
     No,
@@ -2117,7 +2187,7 @@ fn fill_chords(
             for case in cases.iter() {
                 new_cases.push((
                     case.0,
-                    fill_chords(chord_groups, &case.1, s)
+                    fill_chords(chord_groups, case.1, s)
                         .map(|ac| s.a.sref(ac))
                         .unwrap_or(case.1),
                     case.2,
@@ -2188,43 +2258,49 @@ fn parse_fake_key_op_coord_action(
     s: &ParsedState,
 ) -> Result<(Coord, FakeKeyAction)> {
     const ERR_MSG: &str =
-        "on-(press|release)-fakekey expects two parameters: <fake key name> <(tap|press|release)>";
+        "on-(press|release)-fakekey expects two parameters: <fake key name> <(tap|press|release|toggle)>";
     if ac_params.len() != 2 {
         bail!("{ERR_MSG}");
     }
     let y = match s.fake_keys.get(ac_params[0].atom(s.vars()).ok_or_else(|| {
         anyhow_expr!(
             &ac_params[0],
-            "{ERR_MSG}\nA list is not allowed for a fake key name",
+            "{ERR_MSG}\nInvalid first parameter: a fake key name cannot be a list",
         )
     })?) {
-        Some((y, _)) => *y as u8, // cast should be safe; checked in `parse_fake_keys`
-        None => bail_expr!(&ac_params[0], "unknown fake key name {:?}", &ac_params[0]),
+        Some((y, _)) => *y as u16, // cast should be safe; checked in `parse_fake_keys`
+        None => bail_expr!(
+            &ac_params[0],
+            "{ERR_MSG}\nInvalid first parameter: unknown fake key name {:?}",
+            &ac_params[0]
+        ),
     };
     let action = ac_params[1]
         .atom(s.vars())
         .map(|a| match a {
-            "tap" => Ok(FakeKeyAction::Tap),
-            "press" => Ok(FakeKeyAction::Press),
-            "release" => Ok(FakeKeyAction::Release),
-            _ => bail_expr!(
-                &ac_params[1],
-                "{ERR_MSG}\nInvalid second parameter, it must be one of: tap, press, release",
-            ),
+            "tap" => Some(FakeKeyAction::Tap),
+            "press" => Some(FakeKeyAction::Press),
+            "release" => Some(FakeKeyAction::Release),
+            "toggle" => Some(FakeKeyAction::Toggle),
+            _ => None,
         })
+        .flatten()
         .ok_or_else(|| {
             anyhow_expr!(
                 &ac_params[1],
                 "{ERR_MSG}\nInvalid second parameter, it must be one of: tap, press, release",
             )
-        })??;
+        })?;
     let (x, y) = get_fake_key_coords(y);
     Ok((Coord { x, y }, action))
 }
 
+pub const NORMAL_KEY_ROW: u8 = 0;
+pub const FAKE_KEY_ROW: u8 = 1;
+
 fn get_fake_key_coords<T: Into<usize>>(y: T) -> (u8, u16) {
     let y: usize = y.into();
-    (1, y as u16)
+    (FAKE_KEY_ROW, y as u16)
 }
 
 fn parse_fake_key_delay(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
@@ -2244,6 +2320,7 @@ fn parse_delay(
     s: &ParsedState,
 ) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "fakekey-delay expects a single number (ms, 0-65535)";
+    log::warn!("The configuration contains a fakekey-delay action. This is broken for many use cases. It is recommended to use macro instead.");
     let delay = ac_params[0]
         .atom(s.vars())
         .map(str::parse::<u16>)
@@ -2557,7 +2634,7 @@ fn parse_sequence_keys(exprs: &[SExpr], s: &ParsedState) -> Result<Vec<u16>> {
                     (seq, res.1)
                 }
                 Err(mut e) => {
-                    e.help_msg = format!("{SEQ_ERR}\nFound invalid key/chord in key_list");
+                    e.msg = format!("{SEQ_ERR}\nFound invalid key/chord in key_list");
                     return Err(e);
                 }
             };
@@ -2865,7 +2942,7 @@ fn parse_switch_case_bool(
         let l = op_expr
             .list(s.vars())
             .expect("must be a list, checked atom");
-        if l.len() < 1 {
+        if l.is_empty() {
             bail_expr!(op_expr, "key match cannot contain empty lists inside");
         }
         let op = l[0]
@@ -2891,6 +2968,55 @@ fn parse_switch_case_bool(
         ops[placeholder_index as usize] = OpCode::new_bool(op, current_index);
         Ok(current_index)
     }
+}
+
+fn parse_on_idle_fakekey(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+    const ERR_MSG: &str =
+        "on-idle-fakekey expects three parameters:\n<fake key name> <(tap|press|release)> <idle time>\n";
+    if ac_params.len() != 3 {
+        bail!("{ERR_MSG}");
+    }
+    let y = match s.fake_keys.get(ac_params[0].atom(s.vars()).ok_or_else(|| {
+        anyhow_expr!(
+            &ac_params[0],
+            "{ERR_MSG}\nInvalid first parameter: a fake key name cannot be a list",
+        )
+    })?) {
+        Some((y, _)) => *y as u16, // cast should be safe; checked in `parse_fake_keys`
+        None => bail_expr!(
+            &ac_params[0],
+            "{ERR_MSG}\nInvalid first parameter: unknown fake key name {:?}",
+            &ac_params[0]
+        ),
+    };
+    let action = ac_params[1]
+        .atom(s.vars())
+        .map(|a| match a {
+            "tap" => Some(FakeKeyAction::Tap),
+            "press" => Some(FakeKeyAction::Press),
+            "release" => Some(FakeKeyAction::Release),
+            _ => None,
+        })
+        .flatten()
+        .ok_or_else(|| {
+            anyhow_expr!(
+                &ac_params[1],
+                "{ERR_MSG}\nInvalid second parameter, it must be one of: tap, press, release",
+            )
+        })?;
+    let idle_duration = parse_u16(&ac_params[2], s, "idle time").map_err(|mut e| {
+        e.msg = format!("{ERR_MSG}\nInvalid third parameter: {}", e.msg);
+        e
+    })?;
+    let (x, y) = get_fake_key_coords(y);
+    let coord = Coord { x, y };
+    Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
+        CustomAction::FakeKeyOnIdle(FakeKeyOnIdle {
+            coord,
+            action,
+            idle_duration,
+        }),
+    )))))
 }
 
 /// Creates a `KeyOutputs` from `layers::LAYERS`.
