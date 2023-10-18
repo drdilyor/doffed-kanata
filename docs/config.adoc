@@ -392,6 +392,45 @@ For more context, see https://github.com/jtroo/kanata/issues/435.
 )
 ----
 
+
+[[movemouse-inherit-accel-state]]
+=== movemouse-inherit-accel-state
+<<table-of-contents,Back to ToC>>
+
+By default `movemouse-accel` actions will track the acceleration
+state for vertical and horizontal axes separately.
+
+When this setting is enabled, `movemouse-accel` will behave exactly like mouse movements in https://qmk.fm[QMK],
+i.e. the acceleration state of new mouse
+movement actions will be inherited if others are already being pressed.
+
+.Example:
+[source]
+----
+(dofcfg
+  movemouse-inherit-accel-state yes
+)
+----
+
+[[movemouse-smooth-diagonals]]
+== movemouse-smooth-diagonals
+<<table-of-contents,Back to ToC>>
+
+By default, mouse movements move one direction at a time
+and vertical/horizontal movements are on independent timers.
+
+This can result in non-smooth diagonals when drawing a line in some app.
+This option adds a small imperceptible amount of latency to
+synchronize the mouse movements.
+
+.Example:
+[source]
+----
+(dofcfg
+  movemouse-smooth-diagonals yes
+)
+----
+
 [[linux-only-linux-dev]]
 === Linux only: linux-dev
 <<table-of-contents,Back to ToC>>
@@ -637,6 +676,8 @@ a non-applicable operating system.
   sequence-backtrack-modcancel no
   log-layer-changes no
   delegate-to-first-layer yes
+  movemouse-inherit-accel-state yes
+  movemouse-smooth-diagonals yes
   linux-dev /dev/input/dev1:/dev/input/dev2
   linux-dev-names-include "Name 1:Name 2"
   linux-dev-names-exclude "Name 3:Name 4"
@@ -912,7 +953,7 @@ NOTE: If using Linux, make sure to look at the
 )
 ----
 
-[[output-chords-combos]]
+[[output-chordscombos]]
 === Output chords/combos
 <<table-of-contents,Back to ToC>>
 
@@ -932,6 +973,8 @@ These modifiers may be combined together if desired.
 [source]
 ----
 (dofalias
+  ;; Type exclamation mark (US layout)
+  ex! S-1
   ;; Ctrl+C: send SIGINT to a Linux terminal program
   int C-c
   ;; Win+Tab: open Windows' Task View
@@ -941,6 +984,18 @@ These modifiers may be combined together if desired.
   pst C-S-v
 )
 ----
+
+A special behaviour of output chords is that if another key is pressed,
+all of the chord keys will be released
+before the newly pressed key action activates.
+Output chords are typically used do one-off actions such as:
+
+- type a symbol, e.g. `S-1`
+- type a special/accented character, e.g. `RA-a`
+- do a special action like `C-c` to send `SIGTERM` in the terminal
+
+The modifier pressed with these one-off action
+is usually not desired for subsequent actions.
 
 [[repeat-key]]
 === Repeat key
@@ -1140,6 +1195,8 @@ takes (unit: ms) to linearly ramp up from the minimum distance to the maximum
 distance. The third and fourth numbers are the minimum and maximum distances
 (unit: pixels) of each movement.
 
+There is a toggable dofcfg option related to `movemouse-accel` - <<movemouse-inherit-accel-state>>. You might want to enable it, especially if you're coming from QMK.
+
 [[set-mouse]]
 ==== Set absolute mouse position
 <<table-of-contents,Back to ToC>>
@@ -1327,6 +1384,13 @@ The default name `+one-shot+` corresponds to `+one-shot-press+`.
 [[tap-hold]]
 === tap-hold
 <<table-of-contents,Back to ToC>>
+
+WARNING: The `tap-hold` action and all variants can behave unexpectedly on Linux
+with respect to repeat of antecedent key presses.
+The full context is in https://github.com/jtroo/kanata/discussions/422[discussion #422].
+In brief, the workaround is to use `tap-hold` inside of <<multi,multi>>,
+combined with another key action that behaves as a no-op like `f24`. +
+Example: `(multi f24 (tap-hold ...))`
 
 The `+tap-hold+` action allows you to have one action/key for a "tap" and a
 different action/key for a "hold". A tap is a rapid press then release of the

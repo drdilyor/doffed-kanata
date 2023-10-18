@@ -45,6 +45,7 @@ fn span_works_with_unicode_characters() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .expect_err("should be an error because @😊 is not defined")
     .span
@@ -82,6 +83,7 @@ fn test_multiline_error_span() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .expect_err("should error on unknown top level block")
     .span
@@ -111,6 +113,7 @@ fn test_span_of_an_unterminated_block_comment_error() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .expect_err("should be an unterminated comment error")
     .span
@@ -201,6 +204,7 @@ fn parse_action_vars() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .unwrap();
 }
@@ -225,6 +229,7 @@ fn parse_delegate_to_default_layer_yes() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .unwrap();
     assert_eq!(
@@ -253,6 +258,7 @@ fn parse_delegate_to_default_layer_yes_but_base_transparent() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .unwrap();
     assert_eq!(
@@ -281,6 +287,7 @@ fn parse_delegate_to_default_layer_no() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .unwrap();
     assert_eq!(
@@ -685,9 +692,11 @@ fn parse_bad_submacro() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
-    .map_err(|e| {
-        eprintln!("{:?}", e);
+    .map_err(|_e| {
+        // uncomment to see what this looks like when running test
+        // eprintln!("{:?}", _e);
         ""
     })
     .unwrap_err();
@@ -714,9 +723,11 @@ fn parse_bad_submacro_2() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
-    .map_err(|e| {
-        eprintln!("{:?}", e);
+    .map_err(|_e| {
+        // uncomment to see what this looks like when running test
+        // eprintln!("{:?}", _e);
         ""
     })
     .unwrap_err();
@@ -748,6 +759,7 @@ fn parse_switch() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .unwrap();
     assert_eq!(
@@ -820,6 +832,7 @@ fn parse_switch_exceed_depth() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -851,6 +864,7 @@ fn parse_on_idle_fakekey() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -893,6 +907,7 @@ fn parse_on_idle_fakekey_errors() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .map_err(|_e| {
         // comment out to see what this looks like when running test
@@ -916,6 +931,7 @@ fn parse_on_idle_fakekey_errors() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -939,6 +955,7 @@ fn parse_on_idle_fakekey_errors() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -962,6 +979,7 @@ fn parse_on_idle_fakekey_errors() {
         &mut FileContentProvider {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
+        DEF_LOCAL_KEYS,
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -1003,4 +1021,139 @@ fn parse_fake_keys_errors_on_too_many() {
         }
     }
     assert!(checked_for_err);
+}
+
+#[test]
+fn parse_deflocalkeys_overridden() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let source = r#"
+(doflocalkeys-win
++   300
+[   301
+]   302
+{   303
+}   304
+/   305
+;   306
+`   307
+=   308
+-   309
+'   310
+,   311
+.   312
+\   313
+yen 314
+¥   315
+new 316
+)
+(doflocalkeys-wintercept
++   300
+[   301
+]   302
+{   303
+}   304
+/   305
+;   306
+`   307
+=   308
+-   309
+'   310
+,   311
+.   312
+\   313
+yen 314
+¥   315
+new 316
+)
+(doflocalkeys-linux
++   300
+[   301
+]   302
+{   303
+}   304
+/   305
+;   306
+`   307
+=   308
+-   309
+'   310
+,   311
+.   312
+\   313
+yen 314
+¥   315
+new 316
+)
+(dofsrc + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥ new)
+(doflayer base + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥ new)
+"#;
+    let mut s = ParsedState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .expect("succeeds");
+}
+
+#[test]
+fn use_default_overridable_mappings() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let source = r#"
+(dofsrc + [  ]  a  b  /  ;  `  =  -  '  ,  .  9  yen ¥  )
+(doflayer base + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥  )
+"#;
+    let mut s = ParsedState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .expect("succeeds");
+}
+
+#[test]
+fn list_action_not_in_list_error_message_is_good() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofsrc a)
+(dofalias hello
+  one-shot 1 2
+)
+(doflayer base hello)
+"#;
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .map_err(|e| {
+        assert_eq!(
+            e.msg,
+            "This is a list action and must be in parentheses: (one-shot ...)"
+        );
+    })
+    .unwrap_err();
 }
