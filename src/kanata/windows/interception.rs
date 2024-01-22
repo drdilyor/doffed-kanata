@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use kanata_interception as ic;
 use parking_lot::Mutex;
 use std::sync::mpsc::SyncSender as Sender;
@@ -8,8 +8,6 @@ use super::PRESSED_KEYS;
 use crate::kanata::*;
 use crate::oskbd::KeyValue;
 use kanata_parser::keys::OsCode;
-
-const HWID_ARR_SZ: usize = 128;
 
 impl Kanata {
     pub fn event_loop(kanata: Arc<Mutex<Self>>, tx: Sender<KeyEvent>) -> Result<()> {
@@ -21,29 +19,11 @@ impl Kanata {
             information: 0,
         }; 32];
 
-        let mouse_to_intercept_hwid: Option<[u8; HWID_ARR_SZ]> = kanata
-            .lock()
-            .intercept_mouse_hwid.as_ref()
-            .map(|hwid| {
-                hwid.iter().copied().enumerate()
-                    .fold([0u8; HWID_ARR_SZ], |mut hwid, idx_byte| {
-                        let (i, b) = idx_byte;
-                        if i > HWID_ARR_SZ {
-                            panic!("windows-interception-mouse-hwid is too long; it should be up to {HWID_ARR_SZ} 8-bit unsigned integers");
-                        }
-                        hwid[i] = b;
-                        hwid
-                    })
-            });
+        let mouse_to_intercept_hwid: Option<[u8; HWID_ARR_SZ]> = kanata.lock().intercept_mouse_hwid;
         if mouse_to_intercept_hwid.is_some() {
             intrcptn.set_filter(
                 ic::is_mouse,
-                ic::Filter::MouseFilter(
-                    ic::MouseState::all()
-                        & (!ic::MouseState::WHEEL)
-                        & (!ic::MouseState::HWHEEL)
-                        & (!ic::MouseState::MOVE),
-                ),
+                ic::Filter::MouseFilter(ic::MouseState::all() & (!ic::MouseState::MOVE)),
             );
         }
         let mut is_dev_interceptable: HashMap<ic::Device, bool> = HashMap::default();
@@ -70,13 +50,14 @@ impl Kanata {
                             };
                             KeyEvent { code, value }
                         }
-                        ic::Stroke::Mouse { state, .. } => {
+                        ic::Stroke::Mouse { state, rolling, .. } => {
                             if let Some(hwid) = mouse_to_intercept_hwid {
                                 log::trace!("checking mouse stroke {:?}", strokes[i]);
                                 if let Some(event) = mouse_state_to_event(
                                     dev,
                                     &hwid,
                                     state,
+                                    rolling,
                                     &intrcptn,
                                     &mut is_dev_interceptable,
                                 ) {
@@ -123,6 +104,7 @@ fn mouse_state_to_event(
     input_dev: ic::Device,
     allowed_hwid: &[u8; HWID_ARR_SZ],
     state: ic::MouseState,
+    rolling: i16,
     intrcptn: &ic::Interception,
     is_dev_interceptable: &mut HashMap<ic::Device, bool>,
 ) -> Option<KeyEvent> {
@@ -191,6 +173,34 @@ fn mouse_state_to_event(
             code: OsCode::BTN_EXTRA,
             value: KeyValue::Release,
         })
+    } else if state.contains(ic::MouseState::WHEEL) {
+        let osc = if rolling >= 0 {
+            OsCode::MouseWheelUp
+        } else {
+            OsCode::MouseWheelDown
+        };
+        if MAPPED_KEYS.lock().contains(&osc) {
+            Some(KeyEvent {
+                code: osc,
+                value: KeyValue::Tap,
+            })
+        } else {
+            None
+        }
+    } else if state.contains(ic::MouseState::HWHEEL) {
+        let osc = if rolling >= 0 {
+            OsCode::MouseWheelRight
+        } else {
+            OsCode::MouseWheelLeft
+        };
+        if MAPPED_KEYS.lock().contains(&osc) {
+            Some(KeyEvent {
+                code: osc,
+                value: KeyValue::Tap,
+            })
+        } else {
+            None
+        }
     } else {
         None
     }

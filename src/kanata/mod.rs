@@ -1,6 +1,6 @@
 //! Implements the glue between OS input/output and keyberon state management.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use log::{error, info};
 use parking_lot::Mutex;
 use std::sync::mpsc::{Receiver, SyncSender as Sender, TryRecvError};
@@ -8,11 +8,8 @@ use std::sync::mpsc::{Receiver, SyncSender as Sender, TryRecvError};
 use kanata_keyberon::key_code::*;
 use kanata_keyberon::layout::*;
 
-use std::collections::VecDeque;
-use std::io::Write;
-use std::net::TcpStream;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 use std::time;
 
@@ -23,6 +20,9 @@ use kanata_parser::cfg;
 use kanata_parser::cfg::*;
 use kanata_parser::custom_action::*;
 use kanata_parser::keys::*;
+
+mod dynamic_macro;
+use dynamic_macro::*;
 
 #[cfg(feature = "cmd")]
 mod cmd;
@@ -36,21 +36,15 @@ pub use windows::*;
 
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "linux")]
-pub use linux::*;
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 mod caps_word;
 pub use caps_word::*;
 
 type HashSet<T> = rustc_hash::FxHashSet<T>;
 type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DynamicMacroItem {
-    Press(OsCode),
-    Release(OsCode),
-    EndMacro(u16),
-}
 
 pub struct Kanata {
     /// Handle to some OS keyboard output mechanism.
@@ -121,8 +115,8 @@ pub struct Kanata {
     #[cfg(target_os = "linux")]
     /// Tracks the Linux user configuration to continue or abort if no devices are found.
     continue_if_no_devices: bool,
-    #[cfg(target_os = "linux")]
-    /// Tracks the Linux user configuration for device names (instead of paths) that should be
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    /// Tracks the Linux/Macos user configuration for device names (instead of paths) that should be
     /// included for interception and processing by kanata.
     pub include_names: Option<Vec<String>>,
     #[cfg(target_os = "linux")]
@@ -132,14 +126,14 @@ pub struct Kanata {
     #[cfg(all(feature = "interception_driver", target_os = "windows"))]
     /// Used to know which input device to treat as a mouse for intercepting and processing inputs
     /// by kanata.
-    intercept_mouse_hwid: Option<Vec<u8>>,
+    intercept_mouse_hwid: Option<[u8; HWID_ARR_SZ]>,
     /// User configuration to do logging of layer changes or not.
     log_layer_changes: bool,
     /// Tracks the caps-word state. Is Some(...) if caps-word is active and None otherwise.
     pub caps_word: Option<CapsWordState>,
     /// Config items from `dofcfg`.
     #[cfg(target_os = "linux")]
-    pub dofcfg_items: HashMap<String, String>,
+    pub x11_repeat_rate: Option<KeyRepeatSettings>,
     /// Fake key actions that are waiting for a certain duration of keyboard idling.
     pub waiting_for_idle: HashSet<FakeKeyOnIdle>,
     /// Number of ticks since kanata was idle.
@@ -154,6 +148,17 @@ pub struct Kanata {
     /// gets stored in this buffer and if the next movemouse action is opposite axis
     /// than the one stored in the buffer, both events are outputted at the same time.
     movemouse_buffer: Option<(Axis, CalculatedMouseMove)>,
+    /// Configured maximum for dynamic macro recording, to protect users from themselves if they
+    /// have accidentally left it on.
+    dynamic_macro_max_presses: u16,
+    /// Determines behaviour of replayed dynamic macros.
+    dynamic_macro_replay_behaviour: ReplayBehaviour,
+    /// Keys that should be unmodded. If non-empty, any modifier should be cleared.
+    unmodded_keys: Vec<KeyCode>,
+    /// Keys that should be unshifted. If non-empty, left+right shift keys should be cleared.
+    unshifted_keys: Vec<KeyCode>,
+    /// Keep track of last pressed key for [`CustomAction::Repeat`].
+    last_pressed_key: KeyCode,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -208,36 +213,6 @@ pub struct SequenceState {
     pub sequence_timeout: u16,
 }
 
-pub struct DynamicMacroReplayState {
-    pub active_macros: HashSet<u16>,
-    pub delay_remaining: u16,
-    pub macro_items: VecDeque<DynamicMacroItem>,
-}
-
-pub struct DynamicMacroRecordState {
-    pub starting_macro_id: u16,
-    pub macro_items: Vec<DynamicMacroItem>,
-}
-
-impl DynamicMacroRecordState {
-    fn add_release_for_all_unreleased_presses(&mut self) {
-        let mut pressed_oscs = HashSet::default();
-        for item in self.macro_items.iter() {
-            match item {
-                DynamicMacroItem::Press(osc) => pressed_oscs.insert(*osc),
-                DynamicMacroItem::Release(osc) => pressed_oscs.remove(osc),
-                DynamicMacroItem::EndMacro(_) => false,
-            };
-        }
-        // Hopefully release order doesn't matter here since a HashSet is being used
-        for osc in pressed_oscs.into_iter() {
-            self.macro_items.push(DynamicMacroItem::Release(osc));
-        }
-    }
-}
-
-static LAST_PRESSED_KEY: AtomicU32 = AtomicU32::new(0);
-
 use once_cell::sync::Lazy;
 
 static MAPPED_KEYS: Lazy<Mutex<cfg::MappedKeys>> =
@@ -254,23 +229,6 @@ impl Kanata {
             }
         };
 
-        #[cfg(all(feature = "interception_driver", target_os = "windows"))]
-        let intercept_mouse_hwid = cfg
-            .items
-            .get("windows-interception-mouse-hwid")
-            .map(|hwid: &String| {
-                log::trace!("win hwid: {hwid}");
-                hwid.split_whitespace()
-                    .try_fold(vec![], |mut hwid_bytes, hwid_byte| {
-                        hwid_byte.trim_matches(',').parse::<u8>().map(|b| {
-                            hwid_bytes.push(b);
-                            hwid_bytes
-                        })
-                    })
-                    .ok()
-            })
-            .unwrap_or_default();
-
         let kbd_out = match KbdOut::new(
             #[cfg(target_os = "linux")]
             &args.symlink_path,
@@ -281,26 +239,6 @@ impl Kanata {
                 bail!(err)
             }
         };
-
-        #[cfg(target_os = "linux")]
-        let kbd_in_paths = cfg
-            .items
-            .get("linux-dev")
-            .cloned()
-            .map(|paths| parse_colon_separated_text(&paths))
-            .unwrap_or_default();
-        #[cfg(target_os = "linux")]
-        let include_names = cfg
-            .items
-            .get("linux-dev-names-include")
-            .cloned()
-            .map(|paths| parse_colon_separated_text(&paths));
-        #[cfg(target_os = "linux")]
-        let exclude_names = cfg
-            .items
-            .get("linux-dev-names-exclude")
-            .cloned()
-            .map(|paths| parse_colon_separated_text(&paths));
 
         #[cfg(target_os = "windows")]
         unsafe {
@@ -320,18 +258,9 @@ impl Kanata {
         }
 
         update_kbd_out(&cfg.items, &kbd_out)?;
-        set_altgr_behaviour(&cfg)?;
 
-        let sequence_backtrack_modcancel = cfg
-            .items
-            .get("sequence-backtrack-modcancel")
-            .map(|s| !FALSE_VALUES.contains(&s.to_lowercase().as_str()))
-            .unwrap_or(true);
-        let log_layer_changes = cfg
-            .items
-            .get("log-layer-changes")
-            .map(|s| !FALSE_VALUES.contains(&s.to_lowercase().as_str()))
-            .unwrap_or(true);
+        #[cfg(target_os = "windows")]
+        set_win_altgr_behaviour(cfg.items.windows_altgr);
 
         *MAPPED_KEYS.lock() = cfg.mapped_keys;
 
@@ -350,7 +279,7 @@ impl Kanata {
             move_mouse_state_vertical: None,
             move_mouse_state_horizontal: None,
             move_mouse_speed_modifiers: Vec::new(),
-            sequence_backtrack_modcancel,
+            sequence_backtrack_modcancel: cfg.items.sequence_backtrack_modcancel,
             sequence_state: None,
             sequences: cfg.sequences,
             last_tick: time::Instant::now(),
@@ -358,40 +287,37 @@ impl Kanata {
             live_reload_requested: false,
             overrides: cfg.overrides,
             override_states: OverrideStates::new(),
+            #[cfg(target_os = "macos")]
+            include_names: cfg.items.macos_dev_names_include,
             #[cfg(target_os = "linux")]
-            kbd_in_paths,
+            kbd_in_paths: cfg.items.linux_dev,
             #[cfg(target_os = "linux")]
-            continue_if_no_devices: cfg
-                .items
-                .get("linux-continue-if-no-devs-found")
-                .map(|s| TRUE_VALUES.contains(&s.to_lowercase().as_str()))
-                .unwrap_or_default(),
+            continue_if_no_devices: cfg.items.linux_continue_if_no_devs_found,
             #[cfg(target_os = "linux")]
-            include_names,
+            include_names: cfg.items.linux_dev_names_include,
             #[cfg(target_os = "linux")]
-            exclude_names,
+            exclude_names: cfg.items.linux_dev_names_exclude,
             #[cfg(all(feature = "interception_driver", target_os = "windows"))]
-            intercept_mouse_hwid,
+            intercept_mouse_hwid: cfg.items.windows_interception_mouse_hwid,
             dynamic_macro_replay_state: None,
             dynamic_macro_record_state: None,
             dynamic_macros: Default::default(),
-            log_layer_changes,
+            log_layer_changes: cfg.items.log_layer_changes,
             caps_word: None,
-            movemouse_smooth_diagonals: cfg
-                .items
-                .get("movemouse-smooth-diagonals")
-                .map(|s| TRUE_VALUES.contains(&s.to_lowercase().as_str()))
-                .unwrap_or_default(),
-            movemouse_inherit_accel_state: cfg
-                .items
-                .get("movemouse-inherit-accel-state")
-                .map(|s| TRUE_VALUES.contains(&s.to_lowercase().as_str()))
-                .unwrap_or_default(),
+            movemouse_smooth_diagonals: cfg.items.movemouse_smooth_diagonals,
+            movemouse_inherit_accel_state: cfg.items.movemouse_inherit_accel_state,
+            dynamic_macro_max_presses: cfg.items.dynamic_macro_max_presses,
+            dynamic_macro_replay_behaviour: ReplayBehaviour {
+                delay: cfg.items.dynamic_macro_replay_delay_behaviour,
+            },
             #[cfg(target_os = "linux")]
-            dofcfg_items: cfg.items,
+            x11_repeat_rate: cfg.items.linux_x11_repeat_delay_rate,
             waiting_for_idle: HashSet::default(),
             ticks_since_idle: 0,
             movemouse_buffer: None,
+            unmodded_keys: vec![],
+            unshifted_keys: vec![],
+            last_pressed_key: KeyCode::No,
         })
     }
 
@@ -409,62 +335,57 @@ impl Kanata {
             }
         };
         update_kbd_out(&cfg.items, &self.kbd_out)?;
-        set_altgr_behaviour(&cfg).map_err(|e| anyhow!("failed to set altgr behaviour {e})"))?;
-        let log_layer_changes = cfg
-            .items
-            .get("log-layer-changes")
-            .map(|s| !FALSE_VALUES.contains(&s.to_lowercase().as_str()))
-            .unwrap_or(true);
-        self.sequence_backtrack_modcancel = cfg
-            .items
-            .get("sequence-backtrack-modcancel")
-            .map(|s| !FALSE_VALUES.contains(&s.to_lowercase().as_str()))
-            .unwrap_or(true);
+        #[cfg(target_os = "windows")]
+        set_win_altgr_behaviour(cfg.items.windows_altgr);
+        self.sequence_backtrack_modcancel = cfg.items.sequence_backtrack_modcancel;
         self.layout = cfg.layout;
         self.key_outputs = cfg.key_outputs;
         self.layer_info = cfg.layer_info;
         self.sequences = cfg.sequences;
         self.overrides = cfg.overrides;
-        self.log_layer_changes = log_layer_changes;
-        self.movemouse_smooth_diagonals = cfg
-            .items
-            .get("movemouse-smooth-diagonals")
-            .map(|s| TRUE_VALUES.contains(&s.to_lowercase().as_str()))
-            .unwrap_or_default();
-        self.movemouse_inherit_accel_state = cfg
-            .items
-            .get("movemouse-inherit-accel-state")
-            .map(|s| TRUE_VALUES.contains(&s.to_lowercase().as_str()))
-            .unwrap_or_default();
+        self.log_layer_changes = cfg.items.log_layer_changes;
+        self.movemouse_smooth_diagonals = cfg.items.movemouse_smooth_diagonals;
+        self.movemouse_inherit_accel_state = cfg.items.movemouse_inherit_accel_state;
+        self.dynamic_macro_max_presses = cfg.items.dynamic_macro_max_presses;
+        self.dynamic_macro_replay_behaviour = ReplayBehaviour {
+            delay: cfg.items.dynamic_macro_replay_delay_behaviour,
+        };
+
         *MAPPED_KEYS.lock() = cfg.mapped_keys;
-        Kanata::set_repeat_rate(&cfg.items)?;
+        #[cfg(target_os = "linux")]
+        Kanata::set_repeat_rate(cfg.items.linux_x11_repeat_delay_rate)?;
         log::info!("Live reload successful");
         Ok(())
     }
 
     /// Update keyberon layout state for press/release, handle repeat separately
-    fn handle_key_event(&mut self, event: &KeyEvent) -> Result<()> {
+    fn handle_input_event(&mut self, event: &KeyEvent) -> Result<()> {
         log::debug!("process recv ev {event:?}");
         let evc: u16 = event.code.into();
         self.ticks_since_idle = 0;
         let kbrn_ev = match event.value {
             KeyValue::Press => {
-                if let Some(state) = &mut self.dynamic_macro_record_state {
-                    state.macro_items.push(DynamicMacroItem::Press(event.code));
+                if let Some((macro_id, recorded_macro)) = record_press(
+                    &mut self.dynamic_macro_record_state,
+                    event.code,
+                    self.dynamic_macro_max_presses,
+                ) {
+                    self.dynamic_macros.insert(macro_id, recorded_macro);
                 }
                 Event::Press(0, evc)
             }
             KeyValue::Release => {
-                if let Some(state) = &mut self.dynamic_macro_record_state {
-                    state
-                        .macro_items
-                        .push(DynamicMacroItem::Release(event.code));
-                }
+                record_release(&mut self.dynamic_macro_record_state, event.code);
                 Event::Release(0, evc)
             }
             KeyValue::Repeat => {
                 let ret = self.handle_repeat(event);
                 return ret;
+            }
+            KeyValue::Tap => {
+                self.layout.bm().event(Event::Press(0, evc));
+                self.layout.bm().event(Event::Release(0, evc));
+                return Ok(());
             }
         };
         self.layout.bm().event(kbrn_ev);
@@ -481,19 +402,33 @@ impl Kanata {
         let ms_elapsed = ns_elapsed_with_rem / NS_IN_MS;
         self.time_remainder = ns_elapsed_with_rem % NS_IN_MS;
 
+        let mut extra_ticks: u16 = 0;
         for _ in 0..ms_elapsed {
-            self.live_reload_requested |= self.handle_keystate_changes()?;
-            self.handle_scrolling()?;
-            self.handle_move_mouse()?;
-            self.tick_sequence_state()?;
-            self.tick_dynamic_macro_state()?;
-            self.tick_idle_timeout();
-
-            self.prev_keys.clear();
-            self.prev_keys.append(&mut self.cur_keys);
+            self.tick_states()?;
+            if let Some(event) = tick_replay_state(
+                &mut self.dynamic_macro_replay_state,
+                self.dynamic_macro_replay_behaviour,
+            ) {
+                self.layout.bm().event(event.key_event());
+                extra_ticks = extra_ticks.saturating_add(event.delay());
+                log::debug!("dyn macro extra ticks: {extra_ticks}, ms_elapsed: {ms_elapsed}");
+            }
         }
 
         if ms_elapsed > 0 {
+            for i in 0..(extra_ticks.saturating_sub(ms_elapsed as u16)) {
+                self.tick_states()?;
+                if tick_replay_state(
+                    &mut self.dynamic_macro_replay_state,
+                    self.dynamic_macro_replay_behaviour,
+                )
+                .is_some()
+                {
+                    log::error!("overshot to next event at iteration #{i}, the code is broken!");
+                    break;
+                }
+            }
+
             self.last_tick = match ms_elapsed {
                 0..=10 => now,
                 // If too many ms elapsed, probably doing a tight loop of something that's quite
@@ -536,6 +471,18 @@ impl Kanata {
         // end up being wrong. Prefer to do the cheaper operation, as compared to doing the min of
         // u16::MAX and ms_elapsed.
         Ok(ms_elapsed as u16)
+    }
+
+    fn tick_states(&mut self) -> Result<()> {
+        self.live_reload_requested |= self.handle_keystate_changes()?;
+        self.handle_scrolling()?;
+        self.handle_move_mouse()?;
+        self.tick_sequence_state()?;
+        self.tick_idle_timeout();
+        tick_record_state(&mut self.dynamic_macro_record_state);
+        self.prev_keys.clear();
+        self.prev_keys.append(&mut self.cur_keys);
+        Ok(())
     }
 
     fn handle_scrolling(&mut self) -> Result<()> {
@@ -670,35 +617,6 @@ impl Kanata {
         Ok(())
     }
 
-    fn tick_dynamic_macro_state(&mut self) -> Result<()> {
-        let mut clear_replaying_macro = false;
-        if let Some(state) = &mut self.dynamic_macro_replay_state {
-            state.delay_remaining = state.delay_remaining.saturating_sub(1);
-            if state.delay_remaining == 0 {
-                match state.macro_items.pop_front() {
-                    None => clear_replaying_macro = true,
-                    Some(i) => match i {
-                        DynamicMacroItem::Press(k) => {
-                            self.layout.bm().event(Event::Press(0, k.into()))
-                        }
-                        DynamicMacroItem::Release(k) => {
-                            self.layout.bm().event(Event::Release(0, k.into()))
-                        }
-                        DynamicMacroItem::EndMacro(macro_id) => {
-                            state.active_macros.remove(&macro_id);
-                        }
-                    },
-                }
-                state.delay_remaining = 5;
-            }
-        }
-        if clear_replaying_macro {
-            log::debug!("finished macro replay");
-            self.dynamic_macro_replay_state = None;
-        }
-        Ok(())
-    }
-
     fn tick_idle_timeout(&mut self) {
         if self.waiting_for_idle.is_empty() {
             return;
@@ -736,6 +654,60 @@ impl Kanata {
             }
         }
 
+        // Deal with unmodded. Unlike other custom actions, this should come before key presses and
+        // releases. I don't quite remember why custom actions come after the key processing, but I
+        // remember that it is intentional. However, since unmodded needs to modify the key lists,
+        // it should come before.
+        match custom_event {
+            CustomEvent::Press(custacts) => {
+                for custact in custacts.iter() {
+                    match custact {
+                        CustomAction::Unmodded { keys } => {
+                            self.unmodded_keys.extend(keys);
+                        }
+                        CustomAction::Unshifted { keys } => {
+                            self.unshifted_keys.extend(keys);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            CustomEvent::Release(custacts) => {
+                for custact in custacts.iter() {
+                    match custact {
+                        CustomAction::Unmodded { keys } => {
+                            self.unmodded_keys.retain(|k| !keys.contains(k));
+                        }
+                        CustomAction::Unshifted { keys } => {
+                            self.unshifted_keys.retain(|k| !keys.contains(k));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        if !self.unmodded_keys.is_empty() {
+            cur_keys.retain(|k| {
+                !matches!(
+                    k,
+                    KeyCode::LShift
+                        | KeyCode::RShift
+                        | KeyCode::LGui
+                        | KeyCode::RGui
+                        | KeyCode::LCtrl
+                        | KeyCode::RCtrl
+                        | KeyCode::LAlt
+                        | KeyCode::RAlt
+                )
+            });
+            cur_keys.extend(self.unmodded_keys.iter());
+        }
+        if !self.unshifted_keys.is_empty() {
+            cur_keys.retain(|k| !matches!(k, KeyCode::LShift | KeyCode::RShift));
+            cur_keys.extend(self.unshifted_keys.iter());
+        }
+
         // Release keys that do not exist in the current state but exist in the previous state.
         // This used to use a HashSet but it was changed to a Vec because the order of operations
         // matters.
@@ -766,7 +738,7 @@ impl Kanata {
             // logic there and is easier to add here since we already have
             // allocations and logic.
             self.prev_keys.push(*k);
-            LAST_PRESSED_KEY.store(OsCode::from(k).into(), SeqCst);
+            self.last_pressed_key = *k;
             match &mut self.sequence_state {
                 None => {
                     log::debug!("key press     {:?}", k);
@@ -858,6 +830,18 @@ impl Kanata {
                             SequenceInputMode::HiddenSuppressed
                             | SequenceInputMode::HiddenDelayType => {}
                             SequenceInputMode::VisibleBackspaced => {
+                                // Release all keys since they might modify the behaviour of
+                                // backspace into an undesirable behaviour, for example deleting
+                                // more characters than it should.
+                                layout.states.retain(|s| match s {
+                                    State::NormalKey { keycode, .. } => {
+                                        // Ignore the error, ugly to return it from retain, and
+                                        // this is very unlikely to happen anyway.
+                                        let _ = self.kbd_out.release_key(keycode.into());
+                                        false
+                                    }
+                                    _ => true,
+                                });
                                 for k in state.sequence.iter() {
                                     // Check for pressed modifiers and don't input backspaces for
                                     // those since they don't output characters that can be
@@ -953,6 +937,19 @@ impl Kanata {
                                 self.cfg_paths[self.cur_cfg_idx].display()
                             );
                         }
+                        CustomAction::LiveReloadNum(n) => {
+                            let n = usize::from(*n);
+                            live_reload_requested = true;
+                            match self.cfg_paths.get(n) {
+                                Some(path) => {
+                                    self.cur_cfg_idx = n;
+                                    log::info!("Requested live reload of file: {}", path.display(),);
+                                }
+                                None => {
+                                    log::error!("Requested live reload of config file number {}, but only {} config files were passed", n+1, self.cfg_paths.len());
+                                }
+                            }
+                        }
                         CustomAction::Mouse(btn) => {
                             log::debug!("click     {:?}", btn);
                             if let Some(pbtn) = prev_mouse_btn {
@@ -990,6 +987,10 @@ impl Kanata {
                                 })
                             }
                         },
+                        CustomAction::MWheelNotch { direction } => {
+                            self.kbd_out
+                                .scroll(*direction, HI_RES_SCROLL_UNITS_IN_LO_RES)?;
+                        }
                         CustomAction::MoveMouse {
                             direction,
                             interval,
@@ -1138,12 +1139,13 @@ impl Kanata {
                             }
                         }
                         CustomAction::Repeat => {
-                            let key = OsCode::from(LAST_PRESSED_KEY.load(SeqCst));
-                            log::debug!("repeating a keypress {key:?}");
+                            let keycode = self.last_pressed_key;
+                            let osc: OsCode = keycode.into();
+                            log::debug!("repeating a keypress {osc:?}");
                             let mut do_caps_word = false;
                             if !cur_keys.contains(&KeyCode::LShift) {
                                 if let Some(ref mut cw) = self.caps_word {
-                                    cur_keys.push(key.into());
+                                    cur_keys.push(keycode);
                                     let prev_len = cur_keys.len();
                                     cw.maybe_add_lsft(cur_keys);
                                     if cur_keys.len() > prev_len {
@@ -1153,111 +1155,36 @@ impl Kanata {
                                 }
                             }
                             // Release key in case the most recently pressed key is still pressed.
-                            self.kbd_out.release_key(key)?;
-                            self.kbd_out.press_key(key)?;
-                            self.kbd_out.release_key(key)?;
+                            self.kbd_out.release_key(osc)?;
+                            self.kbd_out.press_key(osc)?;
+                            self.kbd_out.release_key(osc)?;
                             if do_caps_word {
                                 self.kbd_out.release_key(OsCode::KEY_LEFTSHIFT)?;
                             }
                         }
                         CustomAction::DynamicMacroRecord(macro_id) => {
-                            let mut stop_record = false;
-                            let mut new_recording = None;
-                            match &mut self.dynamic_macro_record_state {
-                                None => {
-                                    log::info!("starting dynamic macro {macro_id} recording");
-                                    self.dynamic_macro_record_state =
-                                        Some(DynamicMacroRecordState {
-                                            starting_macro_id: *macro_id,
-                                            macro_items: vec![],
-                                        })
-                                }
-                                Some(ref mut state) => {
-                                    // remove the last item, since it's almost certainly a "macro
-                                    // record" key press action which we don't want to keep.
-                                    state.macro_items.remove(state.macro_items.len() - 1);
-                                    state.add_release_for_all_unreleased_presses();
-                                    self.dynamic_macros
-                                        .insert(state.starting_macro_id, state.macro_items.clone());
-                                    if state.starting_macro_id == *macro_id {
-                                        log::info!(
-                                            "same macro id pressed. saving and stopping dynamic macro {} recording",
-                                            state.starting_macro_id
-                                        );
-                                        stop_record = true;
-                                    } else {
-                                        log::info!(
-                                            "saving dynamic macro {} recording then starting new macro recording {macro_id}",
-                                            state.starting_macro_id,
-                                        );
-                                        new_recording = Some(macro_id);
-                                    }
-                                }
-                            }
-                            if stop_record {
-                                self.dynamic_macro_record_state = None;
-                            } else if let Some(macro_id) = new_recording {
-                                log::info!("starting new dynamic macro {macro_id} recording");
-                                self.dynamic_macro_record_state = Some(DynamicMacroRecordState {
-                                    starting_macro_id: *macro_id,
-                                    macro_items: vec![],
-                                });
+                            if let Some((macro_id, prev_recorded_macro)) =
+                                begin_record_macro(*macro_id, &mut self.dynamic_macro_record_state)
+                            {
+                                log::debug!("saving macro {prev_recorded_macro:?}");
+                                self.dynamic_macros.insert(macro_id, prev_recorded_macro);
                             }
                         }
                         CustomAction::DynamicMacroRecordStop(num_actions_to_remove) => {
-                            if let Some(state) = &mut self.dynamic_macro_record_state {
-                                // remove the last item independently of `num_actions_to_remove`
-                                // since it's almost certainly a "macro record stop" key press
-                                // action which we don't want to keep.
-                                state.macro_items.remove(state.macro_items.len() - 1);
-                                log::info!(
-                                    "saving and stopping dynamic macro {} recording with {num_actions_to_remove} actions at the end removed",
-                                    state.starting_macro_id,
-                                );
-                                state.macro_items.truncate(
-                                    state
-                                        .macro_items
-                                        .len()
-                                        .saturating_sub(*num_actions_to_remove as usize),
-                                );
-                                state.add_release_for_all_unreleased_presses();
-                                self.dynamic_macros
-                                    .insert(state.starting_macro_id, state.macro_items.clone());
+                            if let Some((macro_id, prev_recorded_macro)) = stop_macro(
+                                &mut self.dynamic_macro_record_state,
+                                *num_actions_to_remove,
+                            ) {
+                                log::debug!("saving macro {prev_recorded_macro:?}");
+                                self.dynamic_macros.insert(macro_id, prev_recorded_macro);
                             }
-                            self.dynamic_macro_record_state = None;
                         }
                         CustomAction::DynamicMacroPlay(macro_id) => {
-                            match &mut self.dynamic_macro_replay_state {
-                                None => {
-                                    log::info!("replaying macro {macro_id}");
-                                    self.dynamic_macro_replay_state =
-                                        self.dynamic_macros.get(macro_id).map(|macro_items| {
-                                            let mut active_macros = HashSet::default();
-                                            active_macros.insert(*macro_id);
-                                            DynamicMacroReplayState {
-                                                active_macros,
-                                                delay_remaining: 0,
-                                                macro_items: macro_items.clone().into(),
-                                            }
-                                        });
-                                }
-                                Some(state) => {
-                                    if state.active_macros.contains(macro_id) {
-                                        log::warn!("refusing to recurse into macro {macro_id}");
-                                    } else if let Some(items) = self.dynamic_macros.get(macro_id) {
-                                        log::debug!(
-                                            "prepending macro {macro_id} items to current replay"
-                                        );
-                                        state.active_macros.insert(*macro_id);
-                                        state
-                                            .macro_items
-                                            .push_front(DynamicMacroItem::EndMacro(*macro_id));
-                                        for item in items.iter().copied().rev() {
-                                            state.macro_items.push_front(item);
-                                        }
-                                    }
-                                }
-                            }
+                            play_macro(
+                                *macro_id,
+                                &mut self.dynamic_macro_replay_state,
+                                &self.dynamic_macros,
+                            );
                         }
                         CustomAction::SendArbitraryCode(code) => {
                             self.kbd_out.write_code(*code as u32, KeyValue::Press)?;
@@ -1268,13 +1195,15 @@ impl Kanata {
                         CustomAction::SetMouse { x, y } => {
                             self.kbd_out.set_mouse(*x, *y)?;
                         }
-                        CustomAction::FakeKeyOnRelease { .. }
-                        | CustomAction::DelayOnRelease(_)
-                        | CustomAction::CancelMacroOnRelease => {}
                         CustomAction::FakeKeyOnIdle(fkd) => {
                             self.ticks_since_idle = 0;
                             self.waiting_for_idle.insert(*fkd);
                         }
+                        CustomAction::FakeKeyOnRelease { .. }
+                        | CustomAction::DelayOnRelease(_)
+                        | CustomAction::Unmodded { .. }
+                        | CustomAction::Unshifted { .. }
+                        | CustomAction::CancelMacroOnRelease => {}
                     }
                 }
                 #[cfg(feature = "cmd")]
@@ -1419,10 +1348,14 @@ impl Kanata {
             // Prioritize checking the active layer in case a layer-while-held is active.
             if let Some(outputs_for_key) = self.key_outputs[current_layer].get(&event.code) {
                 log::debug!("key outs for active layer-while-held: {outputs_for_key:?};");
-                for kc in outputs_for_key.iter().rev() {
-                    if self.cur_keys.contains(&kc.into()) {
-                        log::debug!("repeat    {:?}", KeyCode::from(*kc));
-                        if let Err(e) = self.kbd_out.write_key(*kc, KeyValue::Repeat) {
+                for osc in outputs_for_key.iter().rev().copied() {
+                    let kc = osc.into();
+                    if self.cur_keys.contains(&kc)
+                        || self.unshifted_keys.contains(&kc)
+                        || self.unmodded_keys.contains(&kc)
+                    {
+                        log::debug!("repeat    {:?}", KeyCode::from(osc));
+                        if let Err(e) = self.kbd_out.write_key(osc, KeyValue::Repeat) {
                             bail!("could not write key {:?}", e)
                         }
                         return Ok(());
@@ -1444,10 +1377,14 @@ impl Kanata {
                 Some(v) => v,
             };
         log::debug!("key outs for default layer: {outputs_for_key:?};");
-        for kc in outputs_for_key.iter().rev() {
-            if self.cur_keys.contains(&kc.into()) {
-                log::debug!("repeat    {:?}", KeyCode::from(*kc));
-                if let Err(e) = self.kbd_out.write_key(*kc, KeyValue::Repeat) {
+        for osc in outputs_for_key.iter().rev().copied() {
+            let kc = osc.into();
+            if self.cur_keys.contains(&kc)
+                || self.unshifted_keys.contains(&kc)
+                || self.unmodded_keys.contains(&kc)
+            {
+                log::debug!("repeat    {:?}", KeyCode::from(osc));
+                if let Err(e) = self.kbd_out.write_key(osc, KeyValue::Repeat) {
                     bail!("could not write key {:?}", e)
                 }
                 return Ok(());
@@ -1456,6 +1393,7 @@ impl Kanata {
         Ok(())
     }
 
+    #[cfg(feature = "tcp_server")]
     pub fn change_layer(&mut self, layer_name: String) {
         for (i, l) in self.layer_info.iter().enumerate() {
             if l.name == layer_name {
@@ -1465,6 +1403,7 @@ impl Kanata {
         }
     }
 
+    #[allow(unused_variables)]
     /// Prints the layer. If the TCP server is enabled, then this will also send a notification to
     /// all connected clients.
     fn check_handle_layer_change(&mut self, tx: &Option<Sender<ServerMessage>>) {
@@ -1474,6 +1413,7 @@ impl Kanata {
             self.prev_layer = cur_layer;
             self.print_layer(cur_layer);
 
+            #[cfg(feature = "tcp_server")]
             if let Some(tx) = tx {
                 match tx.try_send(ServerMessage::LayerChange { new }) {
                     Ok(_) => {}
@@ -1491,10 +1431,12 @@ impl Kanata {
         }
     }
 
+    #[cfg(feature = "tcp_server")]
     pub fn start_notification_loop(
         rx: Receiver<ServerMessage>,
-        clients: Arc<Mutex<HashMap<String, TcpStream>>>,
+        clients: crate::tcp_server::Connections,
     ) {
+        use std::io::Write;
         info!("listening for event notifications to relay to connected clients");
         std::thread::spawn(move || {
             loop {
@@ -1528,6 +1470,13 @@ impl Kanata {
         });
     }
 
+    #[cfg(not(feature = "tcp_server"))]
+    pub fn start_notification_loop(
+        _rx: Receiver<ServerMessage>,
+        _clients: crate::tcp_server::Connections,
+    ) {
+    }
+
     /// Starts a new thread that processes OS key events and advances the keyberon layout's state.
     pub fn start_processing_loop(
         kanata: Arc<Mutex<Self>>,
@@ -1553,6 +1502,12 @@ impl Kanata {
             let mut ms_elapsed = 0;
 
             info!("Starting kanata proper");
+
+            info!(
+                "You may forcefully exit kanata by pressing lctl+spc+esc at any time. \
+                        These keys refer to dofsrc input, meaning BEFORE kanata remaps keys."
+            );
+
             let err = loop {
                 let can_block = {
                     let mut k = kanata.lock();
@@ -1600,8 +1555,8 @@ impl Kanata {
                                 // are not cleared.
                                 if (now - k.last_tick) > time::Duration::from_secs(60) {
                                     log::debug!(
-                                        "clearing keyberon normal key states due to blocking for a while"
-                                    );
+                                    "clearing keyberon normal key states due to blocking for a while"
+                                );
                                     k.layout.bm().states.retain(|s| {
                                         !matches!(
                                             s,
@@ -1627,7 +1582,7 @@ impl Kanata {
                             #[cfg(feature = "perf_logging")]
                             let start = std::time::Instant::now();
 
-                            if let Err(e) = k.handle_key_event(&kev) {
+                            if let Err(e) = k.handle_input_event(&kev) {
                                 break e;
                             }
 
@@ -1662,7 +1617,7 @@ impl Kanata {
                             #[cfg(feature = "perf_logging")]
                             let start = std::time::Instant::now();
 
-                            if let Err(e) = k.handle_key_event(&kev) {
+                            if let Err(e) = k.handle_input_event(&kev) {
                                 break e;
                             }
 
@@ -1736,12 +1691,6 @@ impl Kanata {
                     || (pressed_keys_means_not_idle && matches!(s, State::NormalKey { .. }))
             })
     }
-}
-
-fn set_altgr_behaviour(_cfg: &cfg::Cfg) -> Result<()> {
-    #[cfg(target_os = "windows")]
-    set_win_altgr_behaviour(_cfg)?;
-    Ok(())
 }
 
 #[cfg(feature = "cmd")]
@@ -1831,27 +1780,11 @@ fn check_for_exit(event: &KeyEvent) {
     }
 }
 
-fn update_kbd_out(_cfg: &HashMap<String, String>, _kbd_out: &KbdOut) -> Result<()> {
+fn update_kbd_out(_cfg: &CfgOptions, _kbd_out: &KbdOut) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        _kbd_out.update_unicode_termination(
-                _cfg.get("linux-unicode-termination").map(|s| {
-                match s.as_str() {
-                    "enter" => Ok(UnicodeTermination::Enter),
-                    "space" => Ok(UnicodeTermination::Space),
-                    "enter-space" => Ok(UnicodeTermination::EnterSpace),
-                    "space-enter" => Ok(UnicodeTermination::SpaceEnter),
-                    _ => Err(anyhow!("linux-unicode-termination got {s}. It accepts: enter|space|enter-space|space-enter")),
-                }
-            }).unwrap_or(Ok(_kbd_out.unicode_termination.get()))?);
-        _kbd_out.update_unicode_u_code(
-            _cfg.get("linux-unicode-u-code")
-                .map(|s| {
-                    str_to_oscode(s)
-                        .ok_or_else(|| anyhow!("unknown code for linux-unicode-u-code {s}"))
-                })
-                .unwrap_or(Ok(_kbd_out.unicode_u_code.get()))?,
-        );
+        _kbd_out.update_unicode_termination(_cfg.linux_unicode_termination);
+        _kbd_out.update_unicode_u_code(_cfg.linux_unicode_u_code);
     }
     Ok(())
 }

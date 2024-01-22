@@ -6,6 +6,8 @@
 use anyhow::{anyhow, Result};
 use kanata_keyberon::key_code::KeyCode;
 
+use crate::keys::OsCode;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CustomAction {
     Cmd(Vec<String>),
@@ -29,6 +31,9 @@ pub enum CustomAction {
         interval: u16,
         distance: u16,
     },
+    MWheelNotch {
+        direction: MWheelDirection,
+    },
     MoveMouse {
         direction: MoveDirection,
         interval: u16,
@@ -49,6 +54,10 @@ pub enum CustomAction {
     LiveReload,
     LiveReloadNext,
     LiveReloadPrev,
+    /// Live-reload the n'th configuration file provided on the CLI. This should begin with 0 as
+    /// the first configuration file provided. The rest of the parser code is free to choose 0 or 1
+    /// as the user-facing value though.
+    LiveReloadNum(u16),
     Repeat,
     CancelMacroOnRelease,
     DynamicMacroRecord(u16),
@@ -59,6 +68,12 @@ pub enum CustomAction {
     SetMouse {
         x: u16,
         y: u16,
+    },
+    Unmodded {
+        keys: Vec<KeyCode>,
+    },
+    Unshifted {
+        keys: Vec<KeyCode>,
     },
 }
 
@@ -99,6 +114,20 @@ pub enum MWheelDirection {
     Down,
     Left,
     Right,
+}
+
+impl TryFrom<OsCode> for MWheelDirection {
+    type Error = ();
+    fn try_from(value: OsCode) -> Result<Self, Self::Error> {
+        use OsCode::*;
+        Ok(match value {
+            MouseWheelUp => MWheelDirection::Up,
+            MouseWheelDown => MWheelDirection::Down,
+            MouseWheelLeft => MWheelDirection::Left,
+            MouseWheelRight => MWheelDirection::Right,
+            _ => return Err(()),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

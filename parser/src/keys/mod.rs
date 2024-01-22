@@ -7,16 +7,63 @@ use rustc_hash::FxHashMap as HashMap;
 
 #[cfg(any(target_os = "linux", target_os = "unknown"))]
 mod linux;
-#[cfg(any(target_os = "linux", target_os = "unknown"))]
-pub use linux::*;
-
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "macos", target_os = "unknown"))]
+mod macos;
+#[cfg(any(target_os = "windows", target_os = "unknown"))]
 mod windows;
-#[cfg(target_os = "windows")]
-pub use windows::*;
+#[cfg(any(target_os = "macos", target_os = "unknown"))]
+pub use macos::PageCode;
 
 mod mappings;
-pub use mappings::*;
+
+#[cfg(target_os = "unknown")]
+#[derive(Clone, Copy)]
+pub enum Platform {
+    Win,
+    Linux,
+    Macos,
+}
+
+#[cfg(target_os = "unknown")]
+pub static OSCODE_MAPPING_VARIANT: Mutex<Platform> = Mutex::new(Platform::Linux);
+
+impl OsCode {
+    pub fn as_u16(self) -> u16 {
+        #[cfg(target_os = "unknown")]
+        return match *OSCODE_MAPPING_VARIANT.lock() {
+            Platform::Win => self.as_u16_windows(),
+            Platform::Linux => self.as_u16_linux(),
+            Platform::Macos => self.as_u16_macos(),
+        };
+
+        #[cfg(target_os = "linux")]
+        return self.as_u16_linux();
+
+        #[cfg(target_os = "windows")]
+        return self.as_u16_windows();
+
+        #[cfg(target_os = "macos")]
+        return self.as_u16_macos();
+    }
+
+    pub fn from_u16(code: u16) -> Option<Self> {
+        #[cfg(target_os = "unknown")]
+        return match *OSCODE_MAPPING_VARIANT.lock() {
+            Platform::Win => OsCode::from_u16_windows(code),
+            Platform::Linux => OsCode::from_u16_linux(code),
+            Platform::Macos => OsCode::from_u16_macos(code),
+        };
+
+        #[cfg(target_os = "linux")]
+        return OsCode::from_u16_linux(code);
+
+        #[cfg(target_os = "windows")]
+        return OsCode::from_u16_windows(code);
+
+        #[cfg(target_os = "macos")]
+        return OsCode::from_u16_macos(code);
+    }
+}
 
 static CUSTOM_STRS_TO_OSCODES: Lazy<Mutex<HashMap<String, OsCode>>> = Lazy::new(|| {
     let mut mappings = HashMap::default();
@@ -52,7 +99,7 @@ pub fn clear_custom_str_oscode_mapping() {
 /// be useful to remap via `defcustomkeys`, then it should be moved into here. This is so that the
 /// key name can be remapped while also working for older configurations that already use it.
 fn add_default_str_osc_mappings(mapping: &mut HashMap<String, OsCode>) {
-    let default_mappings = [
+    const DEFAULT_MAPPINGS: &[(&str, OsCode)] = &[
         ("+", OsCode::KEY_KPPLUS),
         ("[", OsCode::KEY_LEFTBRACE),
         ("]", OsCode::KEY_RIGHTBRACE),
@@ -71,8 +118,10 @@ fn add_default_str_osc_mappings(mapping: &mut HashMap<String, OsCode>) {
         ("yen", OsCode::KEY_BACKSLASH),
         // Unicode yen is probably the yen key, so map this to a separate oscode by default.
         ("¥", OsCode::KEY_YEN),
+        ("right", OsCode::KEY_RIGHT),
+        ("grave", OsCode::KEY_GRAVE),
     ];
-    for dm in default_mappings {
+    for dm in DEFAULT_MAPPINGS {
         mapping.entry(dm.0.into()).or_insert(dm.1);
     }
 }
@@ -219,6 +268,8 @@ pub fn str_to_oscode(s: &str) -> Option<OsCode> {
         "f22" => OsCode::KEY_F22,
         "f23" => OsCode::KEY_F23,
         "f24" => OsCode::KEY_F24,
+        #[cfg(any(target_os = "macos", target_os = "unknown"))]
+        "fn" => OsCode::KEY_FN,
         #[cfg(target_os = "windows")]
         "kana" | "katakana" | "katakanahiragana" => OsCode::KEY_HANGEUL,
         #[cfg(any(target_os = "linux", target_os = "unknown"))]
@@ -241,6 +292,16 @@ pub fn str_to_oscode(s: &str) -> Option<OsCode> {
         "mmid" | "mousemid" => OsCode::BTN_MIDDLE,
         "mfwd" | "mouseforward" => OsCode::BTN_EXTRA,
         "mbck" | "mousebackward" => OsCode::BTN_SIDE,
+
+        // NOTE: these are linux and interception-only due to missing implementation for LLHOOK
+        #[cfg(any(target_os = "linux", target_os = "unknown", feature = "interception_driver"))]
+        "mwu" | "mousewheelup" => OsCode::MouseWheelUp,
+        #[cfg(any(target_os = "linux", target_os = "unknown", feature = "interception_driver"))]
+        "mwd" | "mousewheeldown" => OsCode::MouseWheelDown,
+        #[cfg(any(target_os = "linux", target_os = "unknown", feature = "interception_driver"))]
+        "mwl" | "mousewheelleft" => OsCode::MouseWheelLeft,
+        #[cfg(any(target_os = "linux", target_os = "unknown", feature = "interception_driver"))]
+        "mwr" | "mousewheelright" => OsCode::MouseWheelRight,
 
         "hmpg" | "homepage" => OsCode::KEY_HOMEPAGE,
         "mdia" | "media" => OsCode::KEY_MEDIA,
@@ -1018,6 +1079,16 @@ pub enum OsCode {
     BTN_TRIGGER_HAPPY39 = 742,
     BTN_TRIGGER_HAPPY40 = 743,
     BTN_MAX = 744,
+
+    // Mouse wheel events are not a part of EV_KEY, so they technically
+    // shouldn't be there, but they're still there, because this way
+    // it's easier to implement allowing to add them to dofsrc without
+    // making tons of changes all over the codebase.
+    MouseWheelUp = 745,
+    MouseWheelDown = 746,
+    MouseWheelLeft = 747,
+    MouseWheelRight = 748,
+
     KEY_MAX = 767,
 }
 

@@ -3,8 +3,15 @@ This is a sample configuration file that showcases every feature in kanata.
 If anything is confusing or hard to discover, please file an issue or
 contribute a pull request to help improve the document.
 
-This sample file has documentation but it is lower effort than the configuration
-guide. The configuration guide can be found at:
+Since it may be important for you to know, pressing and holding all of the
+three following keys together at the same time will cause kanata to exit:
+
+  Left Control, Space, Escape
+
+This is for the physical key input rather than after any remappings
+that are done by kanata.
+
+This mechanism works on the key input*before any remappings done by kanata.
 
 https://github.com/jtroo/kanata/blob/main/docs/config.adoc
 |#
@@ -47,6 +54,15 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; If you have a colon in your device path, add a backslash before it so that
   ;; kanata does not parse it as multiple devices.
   ;; linux-dev /dev/input/path-to\:device
+
+  ;; Alternatively, you can use list syntax, where both backslashes and colons
+  ;; are parsed literally. List items are separated by spaces or newlines.
+  ;; Using quotation marks for each item is optional, and only required if an
+  ;; item contains spaces.
+  ;; linux-dev (
+  ;;   /dev/input/by-path/pci-0000:00:14.0-usb-0:1:1.0-event
+  ;;   /dev/input/by-id/usb-Dell_Dell_USB_Keyboard-event-kbd
+  ;; )
 
   ;; The linux-dev-names-include entry is parsed identically to linux-dev. It
   ;; defines a list of device names that should be included. This is only
@@ -169,6 +185,16 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;;
   ;; movemouse-smooth-diagonals yes
 
+  ;; This configuration allows you to customize the length limit on dynamic macros.
+  ;; The default limit is 128 keys.
+  ;;
+  ;; dynamic-macro-max-presses 1000
+
+  ;; This configuration makes multiple tap-hold actions that are activated near
+  ;; in time expire their timeout quicker. Without this, the timeout for the 2nd
+  ;; tap-hold onwards will start from 0ms after the previous tap-hold expires.
+  ;;
+  ;; concurrent-tap-hold yes
 )
 
 ;; doflocalkeys-* enables you to define and use key names that match your locale
@@ -209,6 +235,10 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 )
 
 (doflocalkeys-linux
+  ì 13
+)
+
+(doflocalkeys-macos
   ì 13
 )
 
@@ -350,6 +380,9 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; tap: u    hold: misc layer      early tap if any of: (a o e) are pressed
   umk (tap-hold-release-keys 200 200 u @msc (a o e))
 
+  ;; tap: u    hold: misc layer      always tap if any of: (a o e) are pressed
+  uek (tap-hold-except-keys 200 200 u @msc (a o e))
+
   ;; tap for capslk, hold for lctl
   cap (tap-hold 200 200 caps lctl)
 
@@ -449,6 +482,17 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   dp1 (dynamic-macro-play 1)
   dp2 (dynamic-macro-play 2)
 
+  ;; unmod will release all modifiers temporarily and send the .
+  ;; So for example holding shift and tapping a @um1 key will still output 1.
+  um1 (unmod 1)
+  ;; dead keys é (as opposed to using AltGr) that outputs É when shifted
+  dké (macro (unmod ') e)
+
+  ;; unshift is like unmod but only releases shifts
+  ;; In ISO German QWERTZ, force unshifted symbols even if shift is held
+  de{ (unshift ralt 7)
+  de[ (unshift ralt 8)
+
   ;; unicode accepts a single unicode character. The unicode character will
   ;; not be automatically repeated by holding the key down. The alias name
   ;; is the unicode character itself and is referenced by @🙁 in doflayer.
@@ -486,6 +530,10 @@ If you need help, please feel welcome to ask in the GitHub discussions.
     ;;    a || b || c
     (a b c) b fallthrough
 
+    ;; key-history evaluates to true if the n'th most recent key press,
+    ;; {n | n ∈ [1, 8]}, matches the given key.
+    ((key-history a 1) (key-history b 8)) c break
+
     ;; default case, empty list always evaluates to true.
     ;; break vs. fallthrough doesn't matter here
     () c break
@@ -521,13 +569,15 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 ;; except for linux-dev. So in Linux, you cannot live reload and switch keyboard
 ;; devices at the time of writing. The variants `lrpv` and `lrnx` will cycle
 ;; between multiple configuration files, if they are specified in the startup.
-;; arguments.
+;; arguments. The list action variant `lrld-num` takes a number parameter and
+;; reloads the configuration file specified by the number, according to the
+;; order passed into the arguments on kanata startup.
 ;;
 ;; Upon a successful reload, the kanata state will begin on the default base layer
 ;; in the configuration. E.g. in this example configuration, you would start on
 ;; the qwerty layer.
 (doflayer layers
-  _    @qwr @dvk lrld lrpv lrnx _    _    _    _    _    _    _    _
+  _    @qwr @dvk lrld lrpv lrnx (lrld-num 1) _ _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _    _
   _    _    _    _    _    _    _    _    _    _    _    _
@@ -619,10 +669,10 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; This example is similar to the default caps-word behaviour but it moves the
   ;; 0-9 keys to capitalized key list from the extra non-terminating key list.
   cwc (caps-word-custom
-        2000
-        (a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9)
-	(kp0 kp1 kp2 kp3 kp4 kp5 kp6 kp7 kp8 kp9 bspc del up down left rght)
-      )
+    2000
+    (a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9)
+    (kp0 kp1 kp2 kp3 kp4 kp5 kp6 kp7 kp8 kp9 bspc del up down left rght)
+  )
 )
 
 ;; Can see a new action `rpt` in this layer. This repeats the most recently

@@ -11,6 +11,7 @@ pub const TAP_HOLD_RELEASE: &str = "tap-hold-release";
 pub const TAP_HOLD_PRESS_TIMEOUT: &str = "tap-hold-press-timeout";
 pub const TAP_HOLD_RELEASE_TIMEOUT: &str = "tap-hold-release-timeout";
 pub const TAP_HOLD_RELEASE_KEYS: &str = "tap-hold-release-keys";
+pub const TAP_HOLD_EXCEPT_KEYS: &str = "tap-hold-except-keys";
 pub const MULTI: &str = "multi";
 pub const MACRO: &str = "macro";
 pub const MACRO_REPEAT: &str = "macro-repeat";
@@ -57,9 +58,12 @@ pub const CAPS_WORD_CUSTOM: &str = "caps-word-custom";
 pub const DYNAMIC_MACRO_RECORD_STOP_TRUNCATE: &str = "dynamic-macro-record-stop-truncate";
 pub const SWITCH: &str = "switch";
 pub const SEQUENCE: &str = "sequence";
+pub const UNMOD: &str = "unmod";
+pub const UNSHIFT: &str = "unshift";
+pub const LIVE_RELOAD_NUM: &str = "lrld-num";
 
 pub fn is_list_action(ac: &str) -> bool {
-    const LIST_ACTIONS: [&str; 55] = [
+    const LIST_ACTIONS: &[&str] = &[
         LAYER_SWITCH,
         LAYER_TOGGLE,
         LAYER_WHILE_HELD,
@@ -69,6 +73,7 @@ pub fn is_list_action(ac: &str) -> bool {
         TAP_HOLD_PRESS_TIMEOUT,
         TAP_HOLD_RELEASE_TIMEOUT,
         TAP_HOLD_RELEASE_KEYS,
+        TAP_HOLD_EXCEPT_KEYS,
         MULTI,
         MACRO,
         MACRO_REPEAT,
@@ -115,6 +120,9 @@ pub fn is_list_action(ac: &str) -> bool {
         DYNAMIC_MACRO_RECORD_STOP_TRUNCATE,
         SWITCH,
         SEQUENCE,
+        UNMOD,
+        UNSHIFT,
+        LIVE_RELOAD_NUM,
     ];
     LIST_ACTIONS.contains(&ac)
 }

@@ -1,5 +1,6 @@
 use super::*;
-use crate::cfg::sexpr::parse;
+#[allow(unused_imports)]
+use crate::cfg::sexpr::{parse, Span};
 use kanata_keyberon::action::BooleanOperator::*;
 
 use std::sync::Mutex;
@@ -169,6 +170,7 @@ fn parse_action_vars() {
   thd (tap-hold $one $two $chr $two)
   tht (tap-hold-release-timeout $one $two $chr $two $one)
   thk (tap-hold-release-keys $one $two $chr $two $three)
+  the (tap-hold-except-keys $one $two $chr $two $three)
   mac (macro $one $two $one $two $chr C-S-$three $one)
   rmc (macro-repeat $one $two $one $two $chr C-S-$three $one)
   dr1 (dynamic-macro-record $one)
@@ -734,6 +736,38 @@ fn parse_bad_submacro_2() {
 }
 
 #[test]
+fn parse_nested_macro() {
+    // Test exists since it used to crash. It should not crash.
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofvar m1 (a b c))
+(dofsrc a b)
+(doflayer base
+  (macro $m1)
+  (macro bspc bspc $m1)
+)
+"#;
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .map_err(|e| {
+        eprintln!("{:?}", miette::Error::from(e));
+        ""
+    })
+    .unwrap();
+}
+
+#[test]
 fn parse_switch() {
     let _lk = match CFG_PARSE_LOCK.lock() {
         Ok(guard) => guard,
@@ -749,6 +783,7 @@ fn parse_switch() {
     () _ fallthrough
     (a b c) $var1 fallthrough
     ((or (or (or (or (or (or (or (or))))))))) $var1 fallthrough
+    ((key-history a 1) (key-history b 5) (key-history c 8)) $var1 fallthrough
   )
 )
 "#;
@@ -801,6 +836,15 @@ fn parse_switch() {
                         OpCode::new_bool(Or, 8),
                         OpCode::new_bool(Or, 8),
                         OpCode::new_bool(Or, 8),
+                    ],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Fallthrough
+                ),
+                (
+                    &[
+                        OpCode::new_key_history(KeyCode::A, 0),
+                        OpCode::new_key_history(KeyCode::B, 4),
+                        OpCode::new_key_history(KeyCode::C, 7),
                     ],
                     &Action::KeyCode(KeyCode::A),
                     BreakOrFallthrough::Fallthrough
@@ -867,7 +911,6 @@ fn parse_on_idle_fakekey() {
         DEF_LOCAL_KEYS,
     )
     .map_err(|_e| {
-        // uncomment to see what this looks like when running test
         eprintln!("{:?}", _e);
         ""
     })
@@ -1087,6 +1130,25 @@ yen 314
 ¥   315
 new 316
 )
+(doflocalkeys-macos
++   300
+[   301
+]   302
+{   303
+}   304
+/   305
+;   306
+`   307
+=   308
+-   309
+'   310
+,   311
+.   312
+\   313
+yen 314
+¥   315
+new 316
+)
 (dofsrc + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥ new)
 (doflayer base + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥ new)
 "#;
@@ -1156,4 +1218,245 @@ fn list_action_not_in_list_error_message_is_good() {
         );
     })
     .unwrap_err();
+}
+
+#[test]
+fn parse_device_paths() {
+    assert_eq!(parse_colon_separated_text(""), [""]);
+    assert_eq!(parse_colon_separated_text("device1"), ["device1"]);
+    assert_eq!(parse_colon_separated_text("h:w"), ["h", "w"]);
+    assert_eq!(parse_colon_separated_text("h\\:w"), ["h:w"]);
+    assert_eq!(parse_colon_separated_text("h\\:w\\"), ["h:w\\"]);
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "unknown"))]
+fn test_parse_dev() {
+    // The old colon separated devices format
+    assert_eq!(
+        parse_dev(&SExpr::Atom(Spanned {
+            t: "\"Keyboard2:Input Device 1:pci-0000\\:00\\:14.0-usb-0\\:1\\:1.0-event\""
+                .to_string(),
+            span: Span::default(),
+        }))
+        .expect("succeeds"),
+        [
+            "Keyboard2",
+            "Input Device 1",
+            "pci-0000:00:14.0-usb-0:1:1.0-event"
+        ]
+    );
+    parse_dev(&SExpr::Atom(Spanned {
+        t: "\"\"".to_string(),
+        span: Span::default(),
+    }))
+    .expect_err("'' is not a valid device name/path, this should fail");
+
+    // The new device list format
+    assert_eq!(
+        parse_dev(&SExpr::List(Spanned {
+            t: vec![
+                SExpr::Atom(Spanned {
+                    t: "Keyboard2".to_string(),
+                    span: Span::default(),
+                }),
+                SExpr::Atom(Spanned {
+                    t: "\"Input Device 1\"".to_string(),
+                    span: Span::default(),
+                }),
+                SExpr::Atom(Spanned {
+                    t: "pci-0000:00:14.0-usb-0:1:1.0-event".to_string(),
+                    span: Span::default(),
+                }),
+                SExpr::Atom(Spanned {
+                    t: r"backslashes\do\not\escape\:\anything".to_string(),
+                    span: Span::default(),
+                }),
+            ],
+            span: Span::default(),
+        }))
+        .expect("succeeds"),
+        [
+            "Keyboard2",
+            "Input Device 1",
+            "pci-0000:00:14.0-usb-0:1:1.0-event",
+            r"backslashes\do\not\escape\:\anything"
+        ]
+    );
+    parse_dev(&SExpr::List(Spanned {
+        t: vec![
+            SExpr::Atom(Spanned {
+                t: "Device1".to_string(),
+                span: Span::default(),
+            }),
+            SExpr::List(Spanned {
+                t: vec![],
+                span: Span::default(),
+            }),
+        ],
+        span: Span::default(),
+    }))
+    .expect_err("nested lists in path list shouldn't be allowed");
+}
+
+#[test]
+fn parse_all_defcfg() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let source = r#"
+(dofcfg
+  process-unmapped-keys yes
+  danger-enable-cmd yes
+  sequence-timeout 2000
+  sequence-input-mode visible-backspaced
+  sequence-backtrack-modcancel no
+  log-layer-changes no
+  delegate-to-first-layer yes
+  movemouse-inherit-accel-state yes
+  movemouse-smooth-diagonals yes
+  dynamic-macro-max-presses 1000
+  concurrent-tap-hold yes
+  linux-dev /dev/input/dev1:/dev/input/dev2
+  linux-dev-names-include "Name 1:Name 2"
+  linux-dev-names-exclude "Name 3:Name 4"
+  linux-continue-if-no-devs-found yes
+  linux-unicode-u-code v
+  linux-unicode-termination space
+  linux-x11-repeat-delay-rate 400,50
+  windows-altgr add-lctl-release
+  windows-interception-mouse-hwid "70, 0, 60, 0"
+)
+(dofsrc a)
+(doflayer base a)
+"#;
+    let mut s = ParsedState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .expect("succeeds");
+}
+
+#[test]
+fn parse_unmod() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    let source = r#"
+(dofsrc a b c d)
+(doflayer base
+  (unmod a)
+  (unmod a b)
+  (unshift a)
+  (unshift a b)
+)
+"#;
+    let mut s = ParsedState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .expect("succeeds");
+}
+
+#[test]
+fn using_parentheses_in_deflayer_directly_fails_with_custom_message() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofsrc a b)
+(doflayer base ( ))
+"#;
+    let err = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .expect_err("should err");
+    assert!(err
+        .msg
+        .contains("You can't put parentheses in doflayer directly"));
+}
+
+#[test]
+fn using_escaped_parentheses_in_deflayer_fails_with_custom_message() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut s = ParsedState::default();
+    let source = r#"
+(dofsrc a b)
+(doflayer base \( \))
+"#;
+    let err = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .expect_err("should err");
+    assert!(err
+        .msg
+        .contains("Escaping shifted characters with `\\` is currently not supported"));
+}
+
+#[test]
+#[cfg(feature = "cmd")]
+fn parse_cmd() {
+    let _lk = match CFG_PARSE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    let source = r#"
+(dofcfg danger-enable-cmd yes)
+(dofsrc a)
+(doflayer base a)
+(dofvar
+    x blah
+    y (nyoom)
+    z (squish squash (splish splosh))
+)
+(dofalias
+    1 (cmd hello world)
+    2 (cmd (hello world))
+    3 (cmd $x $y ($z))
+)
+"#;
+    let mut s = ParsedState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+    )
+    .expect("succeeds");
 }

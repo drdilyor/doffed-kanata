@@ -6,7 +6,7 @@ use mio::{unix::SourceFd, Events, Interest, Poll, Token};
 use nix::ioctl_read_buf;
 use rustc_hash::FxHashMap as HashMap;
 use signal_hook::{
-    consts::{SIGINT, SIGTERM},
+    consts::{SIGINT, SIGTERM, SIGTSTP},
     iterator::Signals,
 };
 
@@ -15,12 +15,13 @@ use std::fs;
 use std::io;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 use super::*;
 use crate::{kanata::CalculatedMouseMove, oskbd::KeyEvent};
-use kanata_parser::custom_action::*;
 use kanata_parser::keys::*;
+use kanata_parser::{cfg::UnicodeTermination, custom_action::*};
 
 pub struct KbdIn {
     devices: HashMap<Token, (Device, String)>,
@@ -37,6 +38,8 @@ pub struct KbdIn {
 
 const INOTIFY_TOKEN_VALUE: usize = 0;
 const INOTIFY_TOKEN: Token = Token(INOTIFY_TOKEN_VALUE);
+
+pub static WAIT_DEVICE_MS: AtomicU64 = AtomicU64::new(200);
 
 impl KbdIn {
     pub fn new(
@@ -184,7 +187,7 @@ impl KbdIn {
             let discovered_devices = missing
                 .iter()
                 .filter_map(|dev_path| {
-                    for _ in 0..10 {
+                    for _ in 0..(WAIT_DEVICE_MS.load(Ordering::SeqCst) / 10) {
                         // try a few times with waits in between; device might not be ready
                         if let Ok(device) = Device::open(dev_path) {
                             return Some((device, dev_path.clone()));
@@ -206,7 +209,9 @@ impl KbdIn {
             missing.retain(|path| !paths_registered.contains(path));
         } else {
             log::info!("sleeping for a moment to let devices become ready");
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(std::time::Duration::from_millis(
+                WAIT_DEVICE_MS.load(Ordering::SeqCst),
+            ));
             discover_devices(self.include_names.as_deref(), self.exclude_names.as_deref())
                 .into_iter()
                 .try_for_each(|(dev, path)| {
@@ -262,11 +267,36 @@ pub fn is_input_device(device: &Device) -> bool {
 impl TryFrom<InputEvent> for KeyEvent {
     type Error = ();
     fn try_from(item: InputEvent) -> Result<Self, Self::Error> {
+        use OsCode::*;
         match item.kind() {
             evdev::InputEventKind::Key(k) => Ok(Self {
                 code: OsCode::from_u16(k.0).ok_or(())?,
                 value: KeyValue::from(item.value()),
             }),
+            evdev::InputEventKind::RelAxis(axis_type) => {
+                let dist = item.value();
+                let code: OsCode = match axis_type {
+                    RelativeAxisType::REL_WHEEL | RelativeAxisType::REL_WHEEL_HI_RES => {
+                        if dist > 0 {
+                            MouseWheelUp
+                        } else {
+                            MouseWheelDown
+                        }
+                    }
+                    RelativeAxisType::REL_HWHEEL | RelativeAxisType::REL_HWHEEL_HI_RES => {
+                        if dist > 0 {
+                            MouseWheelRight
+                        } else {
+                            MouseWheelLeft
+                        }
+                    }
+                    _ => return Err(()),
+                };
+                Ok(KeyEvent {
+                    code,
+                    value: KeyValue::Tap,
+                })
+            }
             _ => Err(()),
         }
     }
@@ -278,22 +308,12 @@ impl From<KeyEvent> for InputEvent {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum UnicodeTermination {
-    Enter,
-    Space,
-    SpaceEnter,
-    EnterSpace,
-}
-
 use std::cell::Cell;
 
 pub struct KbdOut {
     device: uinput::VirtualDevice,
     accumulated_scroll: u16,
     accumulated_hscroll: u16,
-    #[allow(dead_code)] // stored here for persistence+cleanup on exit
-    symlink: Option<Symlink>,
     raw_buf: Vec<InputEvent>,
     pub unicode_termination: Cell<UnicodeTermination>,
     pub unicode_u_code: Cell<OsCode>,
@@ -325,7 +345,9 @@ impl KbdOut {
 
         let mut device = uinput::VirtualDeviceBuilder::new()?
             .name("kanata")
-            .input_id(evdev::InputId::new(evdev::BusType::BUS_USB, 1, 1, 1))
+            // libinput's "disable while typing" feature don't work when bus_type
+            // is set to BUS_USB, but appears to work when it's set to BUS_I8042.
+            .input_id(evdev::InputId::new(evdev::BusType::BUS_I8042, 1, 1, 1))
             .with_keys(&keys)?
             .with_relative_axes(&relative_axes)?
             .build()?;
@@ -337,17 +359,16 @@ impl KbdOut {
         let symlink = if let Some(symlink_path) = symlink_path {
             let dest = PathBuf::from(symlink_path);
             let symlink = Symlink::new(devnode, dest)?;
-            Symlink::clean_when_killed(symlink.clone());
             Some(symlink)
         } else {
             None
         };
+        handle_signals(symlink);
 
         Ok(KbdOut {
             device,
             accumulated_scroll: 0,
             accumulated_hscroll: 0,
-            symlink,
             raw_buf: vec![],
 
             // historically was the only option, so make Enter the default
@@ -664,42 +685,28 @@ impl Symlink {
         log::info!("Created symlink {:#?} -> {:#?}", dest, source);
         Ok(Self { dest })
     }
-
-    fn clean_when_killed(symlink: Self) {
-        thread::spawn(|| {
-            let mut signals = Signals::new([SIGINT, SIGTERM]).expect("signals register");
-            for signal in &mut signals {
-                match signal {
-                    SIGINT | SIGTERM => {
-                        drop(symlink);
-                        signal_hook::low_level::emulate_default_handler(signal)
-                            .expect("run original sighandlers");
-                        unreachable!();
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        });
-    }
 }
 
-pub fn parse_colon_separated_text(paths: &str) -> Vec<String> {
-    let mut all_paths = vec![];
-    let mut full_dev_path = String::new();
-    let mut dev_path_iter = paths.split(':').peekable();
-    while let Some(dev_path) = dev_path_iter.next() {
-        if dev_path.ends_with('\\') && dev_path_iter.peek().is_some() {
-            full_dev_path.push_str(dev_path.trim_end_matches('\\'));
-            full_dev_path.push(':');
-            continue;
-        } else {
-            full_dev_path.push_str(dev_path);
+fn handle_signals(symlink: Option<Symlink>) {
+    thread::spawn(|| {
+        let mut signals = Signals::new([SIGINT, SIGTERM, SIGTSTP]).expect("signals register");
+        if let Some(signal) = (&mut signals).into_iter().next() {
+            match signal {
+                SIGINT | SIGTERM => {
+                    drop(symlink);
+                    signal_hook::low_level::emulate_default_handler(signal)
+                        .expect("run original sighandlers");
+                    unreachable!();
+                }
+                SIGTSTP => {
+                    drop(symlink);
+                    log::warn!("got SIGTSTP, exiting instead of pausing so keyboards don't hang");
+                    std::process::exit(SIGTSTP);
+                }
+                _ => unreachable!(),
+            }
         }
-        all_paths.push(full_dev_path.clone());
-        full_dev_path.clear();
-    }
-    all_paths.shrink_to_fit();
-    all_paths
+    });
 }
 
 // Note for allow: the ioctl_read_buf triggers this clippy lint.
@@ -729,13 +736,6 @@ fn wait_for_all_keys_unpressed(dev: &Device) -> Result<(), io::Error> {
         std::thread::sleep(std::time::Duration::from_micros(100));
     }
     Ok(())
-}
-
-#[test]
-fn test_parse_dev_paths() {
-    assert_eq!(parse_colon_separated_text("h:w"), ["h", "w"]);
-    assert_eq!(parse_colon_separated_text("h\\:w"), ["h:w"]);
-    assert_eq!(parse_colon_separated_text("h\\:w\\"), ["h:w\\"]);
 }
 
 impl Drop for Symlink {

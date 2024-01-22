@@ -1,0 +1,34 @@
+name: macos-build
+
+on:
+  workflow_dispatch:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "persist-cross-job"
+    - name: Do the stuff
+      shell: bash
+      run: |
+        mkdir -p artifacts
+        cargo build --release
+        mv target/release/kanata artifacts/kanata_macos
+        cargo build --release --features cmd
+        mv target/release/kanata artifacts/kanata_macos_cmd_allowed
+    - uses: actions/upload-artifact@v3
+      with:
+        name: macos-binaries
+        path: |
+          artifacts/kanata_macos
+          artifacts/kanata_macos_cmd_allowed

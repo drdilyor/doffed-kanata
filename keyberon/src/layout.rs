@@ -22,8 +22,8 @@
 /// to do when not using a macro.
 pub use kanata_keyberon_macros::*;
 
-use crate::action::*;
 use crate::key_code::KeyCode;
+use crate::{action::*, multikey_buffer::MultiKeyBuffer};
 use arraydeque::ArrayDeque;
 use heapless::Vec;
 
@@ -83,6 +83,9 @@ where
     pub active_sequences: ArrayDeque<[SequenceState<'a, T>; 4], arraydeque::behavior::Wrapping>,
     pub action_queue: ActionQueue<'a, T>,
     pub rpt_action: Option<&'a Action<'a, T>>,
+    pub historical_keys: ArrayDeque<[KeyCode; 8], arraydeque::behavior::Wrapping>,
+    pub quick_tap_hold_timeout: bool,
+    rpt_multikey_key_buffer: MultiKeyBuffer<'a, T>,
 }
 
 /// An event on the key matrix.
@@ -218,6 +221,18 @@ impl<'a, T: 'a> State<'a, T> {
         match self {
             NormalKey { keycode, .. } => Some(*keycode),
             FakeKey { keycode } => Some(*keycode),
+            _ => None,
+        }
+    }
+    fn keycode_in_coords(&self, coords: &OneShotCoords) -> Option<KeyCode> {
+        match self {
+            NormalKey { keycode, coord, .. } => {
+                if coords.contains(coord) {
+                    Some(*keycode)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -386,6 +401,7 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
     }
 
     fn handle_hold_tap(&mut self, cfg: HoldTapConfig, queued: &Queue) -> Option<WaitingAction> {
+        let mut skip_timeout = false;
         match cfg {
             HoldTapConfig::Default => (),
             HoldTapConfig::HoldOnOtherKeyPress => {
@@ -406,8 +422,11 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
                 }
             }
             HoldTapConfig::Custom(func) => {
-                if let waiting_action @ Some(_) = (func)(QueuedIter(queued.iter())) {
+                let (waiting_action, local_skip) = (func)(QueuedIter(queued.iter()));
+                if waiting_action.is_some() {
                     return waiting_action;
+                } else {
+                    skip_timeout = local_skip;
                 }
             }
         }
@@ -415,12 +434,12 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
             .iter()
             .find(|s| self.is_corresponding_release(&s.event))
         {
-            if self.timeout >= self.delay.saturating_sub(since) {
+            if self.timeout > self.delay.saturating_sub(since) {
                 Some(WaitingAction::Tap)
             } else {
                 Some(WaitingAction::Timeout)
             }
-        } else if self.timeout == 0 {
+        } else if self.timeout == 0 && (!skip_timeout) {
             Some(WaitingAction::Timeout)
         } else {
             None
@@ -679,6 +698,8 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
     }
 }
 
+type OneShotCoords = ArrayDeque<[KCoord; ONE_SHOT_MAX_ACTIVE], arraydeque::behavior::Wrapping>;
+
 #[derive(Debug, Copy, Clone)]
 pub struct SequenceState<'a, T: 'a> {
     cur_event: Option<SequenceEvent<'a, T>>,
@@ -729,9 +750,10 @@ impl OneShotState {
         }
     }
 
-    fn handle_press(&mut self, key: OneShotHandlePressKey) {
+    fn handle_press(&mut self, key: OneShotHandlePressKey) -> OneShotCoords {
+        let mut oneshot_coords = ArrayDeque::new();
         if self.keys.is_empty() {
-            return;
+            return oneshot_coords;
         }
         match key {
             OneShotHandlePressKey::OneShotKey(pressed_coord) => {
@@ -742,6 +764,7 @@ impl OneShotState {
                 ) && self.keys.contains(&pressed_coord)
                 {
                     self.release_on_next_tick = true;
+                    oneshot_coords.extend(self.keys.iter().copied());
                 }
                 self.released_keys.retain(|coord| *coord != pressed_coord);
             }
@@ -754,8 +777,10 @@ impl OneShotState {
                 } else {
                     let _ = self.other_pressed_keys.push_back(pressed_coord);
                 }
+                oneshot_coords.extend(self.keys.iter().copied());
             }
-        }
+        };
+        oneshot_coords
     }
 
     /// Returns true if the caller should handle the release normally and false otherwise.
@@ -855,6 +880,9 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
             active_sequences: ArrayDeque::new(),
             action_queue: ArrayDeque::new(),
             rpt_action: None,
+            historical_keys: ArrayDeque::new(),
+            rpt_multikey_key_buffer: unsafe { MultiKeyBuffer::new() },
+            quick_tap_hold_timeout: false,
         }
     }
     /// Iterates on the key codes of the current state.
@@ -1016,6 +1044,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                         Some(SequenceEvent::Press(keycode)) => {
                             // Start tracking this fake key Press() event
                             let _ = self.states.push(FakeKey { keycode });
+                            self.historical_keys.push_front(keycode);
                             // Fine to fake (0, 0). This is sequences anyway. In Kanata, nothing
                             // valid should be at (0, 0) that this would interfere with.
                             self.oneshot
@@ -1024,6 +1053,7 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                         Some(SequenceEvent::Tap(keycode)) => {
                             // Same as Press() except we track it for one tick via seq.tapped:
                             let _ = self.states.push(FakeKey { keycode });
+                            self.historical_keys.push_front(keycode);
                             self.oneshot
                                 .handle_press(OneShotHandlePressKey::Other((0, 0)));
                             seq.tapped = Some(keycode);
@@ -1226,7 +1256,11 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                 {
                     let waiting: WaitingState<T> = WaitingState {
                         coord,
-                        timeout: *timeout,
+                        timeout: if self.quick_tap_hold_timeout {
+                            timeout.saturating_sub(delay)
+                        } else {
+                            *timeout
+                        },
                         delay,
                         ticks: 0,
                         hold,
@@ -1320,20 +1354,41 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
             }
             &KeyCode(keycode) => {
                 self.last_press_tracker.coord = coord;
+                // Most-recent-first!
+                self.historical_keys.push_front(keycode);
                 let _ = self.states.push(NormalKey {
                     coord,
                     keycode,
                     flags: NormalKeyFlags(0),
                 });
+                let mut oneshot_coords = ArrayDeque::new();
                 if !is_oneshot {
-                    self.oneshot
+                    oneshot_coords = self
+                        .oneshot
                         .handle_press(OneShotHandlePressKey::Other(coord));
                 }
-                self.rpt_action = Some(action);
+                if oneshot_coords.is_empty() {
+                    self.rpt_action = Some(action);
+                } else {
+                    self.rpt_action = None;
+                    unsafe {
+                        self.rpt_multikey_key_buffer.clear();
+                        for kc in self
+                            .states
+                            .iter()
+                            .filter_map(|kc| State::keycode_in_coords(kc, &oneshot_coords))
+                        {
+                            self.rpt_multikey_key_buffer.push(kc);
+                        }
+                        self.rpt_multikey_key_buffer.push(keycode);
+                        self.rpt_action = Some(self.rpt_multikey_key_buffer.get_ref());
+                    }
+                }
             }
             &MultipleKeyCodes(v) => {
                 self.last_press_tracker.coord = coord;
                 for &keycode in *v {
+                    self.historical_keys.push_front(keycode);
                     let _ = self.states.push(NormalKey {
                         coord,
                         keycode,
@@ -1352,11 +1407,32 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                         }),
                     });
                 }
+
+                let mut oneshot_coords = ArrayDeque::new();
                 if !is_oneshot {
-                    self.oneshot
+                    oneshot_coords = self
+                        .oneshot
                         .handle_press(OneShotHandlePressKey::Other(coord));
                 }
-                self.rpt_action = Some(action);
+                if oneshot_coords.is_empty() {
+                    self.rpt_action = Some(action);
+                } else {
+                    self.rpt_action = None;
+                    unsafe {
+                        self.rpt_multikey_key_buffer.clear();
+                        for kc in self
+                            .states
+                            .iter()
+                            .filter_map(|s| s.keycode_in_coords(&oneshot_coords))
+                        {
+                            self.rpt_multikey_key_buffer.push(kc);
+                        }
+                        for &keycode in *v {
+                            self.rpt_multikey_key_buffer.push(keycode);
+                        }
+                        self.rpt_action = Some(self.rpt_multikey_key_buffer.get_ref());
+                    }
+                }
             }
             &MultipleActions(v) => {
                 self.last_press_tracker.coord = coord;
@@ -1466,9 +1542,10 @@ impl<'a, const C: usize, const R: usize, const L: usize, T: 'a + Copy + std::fmt
                 return ret;
             }
             Switch(sw) => {
-                let kcs = self.states.iter().filter_map(State::keycode);
+                let active_keys = self.states.iter().filter_map(State::keycode);
+                let historical_keys = self.historical_keys.iter().copied();
                 let action_queue = &mut self.action_queue;
-                for ac in sw.actions(kcs.clone()) {
+                for ac in sw.actions(active_keys, historical_keys) {
                     action_queue.push_back(Some((coord, ac)));
                 }
                 // Switch is not properly repeatable. This has to use the action queue for the
@@ -1803,6 +1880,66 @@ mod test {
     }
 
     #[test]
+    fn simultaneous_hold() {
+        static LAYERS: Layers<3, 1, 1> = [[[
+            HoldTap(&HoldTapAction {
+                timeout: 200,
+                hold: k(LAlt),
+                timeout_action: k(LAlt),
+                tap: k(Space),
+                config: HoldTapConfig::Default,
+                tap_hold_interval: 0,
+            }),
+            HoldTap(&HoldTapAction {
+                timeout: 200,
+                hold: k(RAlt),
+                timeout_action: k(RAlt),
+                tap: k(A),
+                config: HoldTapConfig::Default,
+                tap_hold_interval: 0,
+            }),
+            HoldTap(&HoldTapAction {
+                timeout: 200,
+                hold: k(LCtrl),
+                timeout_action: k(LCtrl),
+                tap: k(A),
+                config: HoldTapConfig::Default,
+                tap_hold_interval: 0,
+            }),
+        ]]];
+        let mut layout = Layout::new(&LAYERS);
+        layout.quick_tap_hold_timeout = true;
+
+        // Press and release another key before timeout
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+        layout.event(Press(0, 0));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+        layout.event(Press(0, 1));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+        layout.event(Press(0, 2));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[], layout.keycodes());
+
+        for _ in 0..196 {
+            assert_eq!(CustomEvent::NoEvent, layout.tick());
+            assert_keys(&[], layout.keycodes());
+        }
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[LAlt], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[LAlt], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[LAlt, RAlt], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[LAlt, RAlt], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[LAlt, RAlt, LCtrl], layout.keycodes());
+    }
+
+    #[test]
     fn multiple_actions() {
         static LAYERS: Layers<2, 1, 2> = [
             [[MultipleActions(&[l(1), k(LShift)].as_slice()), k(F)]],
@@ -1912,17 +2049,17 @@ mod test {
 
     #[test]
     fn custom_handler() {
-        fn always_tap(_: QueuedIter) -> Option<WaitingAction> {
-            Some(WaitingAction::Tap)
+        fn always_tap(_: QueuedIter) -> (Option<WaitingAction>, bool) {
+            (Some(WaitingAction::Tap), false)
         }
-        fn always_hold(_: QueuedIter) -> Option<WaitingAction> {
-            Some(WaitingAction::Hold)
+        fn always_hold(_: QueuedIter) -> (Option<WaitingAction>, bool) {
+            (Some(WaitingAction::Hold), false)
         }
-        fn always_nop(_: QueuedIter) -> Option<WaitingAction> {
-            Some(WaitingAction::NoOp)
+        fn always_nop(_: QueuedIter) -> (Option<WaitingAction>, bool) {
+            (Some(WaitingAction::NoOp), false)
         }
-        fn always_none(_: QueuedIter) -> Option<WaitingAction> {
-            None
+        fn always_none(_: QueuedIter) -> (Option<WaitingAction>, bool) {
+            (None, false)
         }
         static LAYERS: Layers<4, 1, 1> = [[[
             HoldTap(&HoldTapAction {

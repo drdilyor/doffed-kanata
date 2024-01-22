@@ -1,23 +1,26 @@
 use anyhow::{bail, Result};
+use clap::Parser;
+use kanata_parser::cfg;
 use log::info;
 use simplelog::*;
+
 use std::path::PathBuf;
 
 mod kanata;
 mod oskbd;
 mod tcp_server;
 
-#[cfg(test)]
-mod tests;
-
-use clap::Parser;
 use kanata::Kanata;
 use tcp_server::TcpServer;
+
+#[cfg(test)]
+mod tests;
 
 type CfgPath = PathBuf;
 
 pub struct ValidatedArgs {
     paths: Vec<CfgPath>,
+    #[cfg(feature = "tcp_server")]
     port: Option<i32>,
     #[cfg(target_os = "linux")]
     symlink_path: Option<String>,
@@ -81,6 +84,7 @@ kanata.kbd in the current working directory and
 
     /// Port to run the optional TCP server on. If blank, no TCP port will be
     /// listened on.
+    #[cfg(feature = "tcp_server")]
     #[arg(short, long, verbatim_doc_comment)]
     port: Option<i32>,
 
@@ -90,6 +94,11 @@ kanata.kbd in the current working directory and
     #[arg(short, long, verbatim_doc_comment)]
     symlink_path: Option<String>,
 
+    /// List the keyboards available for grabbing and exit.
+    #[cfg(target_os = "macos")]
+    #[arg(short, long)]
+    list: bool,
+
     /// Enable debug logging.
     #[arg(short, long)]
     debug: bool,
@@ -98,15 +107,34 @@ kanata.kbd in the current working directory and
     #[arg(short, long)]
     trace: bool,
 
-    /// Remove the startup delay on kanata. In some cases, removing the delay may cause keyboard
-    /// issues on startup.
-    #[arg(short, long)]
+    /// Remove the startup delay on kanata.
+    /// In some cases, removing the delay may cause keyboard issues on startup.
+    #[arg(short, long, verbatim_doc_comment)]
     nodelay: bool,
+
+    /// Milliseconds to wait before attempting to register a newly connected
+    /// device. The default is 200.
+    ///
+    /// You may wish to increase this if you have a device that is failing
+    /// to register - the device may be taking too long to become ready.
+    #[cfg(target_os = "linux")]
+    #[arg(short, long, verbatim_doc_comment)]
+    wait_device_ms: Option<u64>,
+
+    /// Validate configuration file and exit
+    #[arg(long, verbatim_doc_comment)]
+    check: bool,
 }
 
 /// Parse CLI arguments and initialize logging.
 fn cli_init() -> Result<ValidatedArgs> {
     let args = Args::parse();
+
+    #[cfg(target_os = "macos")]
+    if args.list {
+        karabiner_driverkit::list_keyboards();
+        std::process::exit(0);
+    }
 
     let cfg_paths = args.cfg.unwrap_or_else(default_cfg);
 
@@ -145,8 +173,28 @@ fn cli_init() -> Result<ValidatedArgs> {
         bail!("No config files provided\nFor more info, pass the `-h` or `--help` flags.");
     }
 
+    if args.check {
+        log::info!("validating config only and exiting");
+        let status = match cfg::new_from_file(&cfg_paths[0]) {
+            Ok(_) => 0,
+            Err(e) => {
+                log::error!("{e:?}");
+                1
+            }
+        };
+        std::process::exit(status);
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(wait) = args.wait_device_ms {
+        use std::sync::atomic::Ordering;
+        log::info!("Setting device registration wait time to {wait} ms.");
+        oskbd::WAIT_DEVICE_MS.store(wait, Ordering::SeqCst);
+    }
+
     Ok(ValidatedArgs {
         paths: cfg_paths,
+        #[cfg(feature = "tcp_server")]
         port: args.port,
         #[cfg(target_os = "linux")]
         symlink_path: args.symlink_path,
@@ -169,7 +217,16 @@ fn main_impl() -> Result<()> {
     // events, which it sends to the "processing loop". The processing loop handles keyboard events
     // while also maintaining `tick()` calls to keyberon.
 
-    let (server, ntx, nrx) = if let Some(port) = args.port {
+    let (server, ntx, nrx) = if let Some(port) = {
+        #[cfg(feature = "tcp_server")]
+        {
+            args.port
+        }
+        #[cfg(not(feature = "tcp_server"))]
+        {
+            None
+        }
+    } {
         let mut server = TcpServer::new(port);
         server.start(kanata_arc.clone());
         let (ntx, nrx) = std::sync::mpsc::sync_channel(100);
@@ -182,6 +239,7 @@ fn main_impl() -> Result<()> {
     Kanata::start_processing_loop(kanata_arc.clone(), rx, ntx, args.nodelay);
 
     if let (Some(server), Some(nrx)) = (server, nrx) {
+        #[allow(clippy::unit_arg)]
         Kanata::start_notification_loop(nrx, server.connections);
     }
 
