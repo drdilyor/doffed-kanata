@@ -3,58 +3,77 @@ members = [
     "./",
     "parser",
     "keyberon",
+    "example_tcp_client",
+    "tcp_protocol",
+    "windows_key_tester",
+    "simulated_input",
+    "simulated_passthru",
 ]
+exclude = [
+    "wasm",
+]
+resolver = "2"
 
 [package]
 name = "kanata"
-version = "1.5.0"
+version = "1.7.0-prerelease"
 authors = ["jtroo <j.andreitabs@gmail.com>"]
 description = "Multi-layer keyboard customization"
-keywords = ["cli", "linux", "windows", "keyboard", "layout"]
+keywords = ["keyboard", "layout", "remapping"]
 categories = ["command-line-utilities"]
 homepage = "https://github.com/jtroo/kanata"
 repository = "https://github.com/jtroo/kanata"
 readme = "README.md"
-license = "LGPL-3.0"
+license = "LGPL-3.0-only"
 edition = "2021"
+default-run = "kanata"
+
+[lib]
+name = "kanata_state_machine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kanata"
+path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.1.6", features = [ "std", "derive", "help", "suggestions" ], default_features = false }
-log = { version = "0.4.8", default_features = false }
-simplelog = "0.12.0"
 anyhow = "1"
-parking_lot = "0.12"
+clap = { version = "4", features = [ "std", "derive", "help", "suggestions" ], default_features = false }
+dirs = "5.0.1"
+indoc = { version = "2.0.4", optional = true }
+instant = { version = "0.1.12", default_features = false }
+log = { version = "0.4.8", default_features = false }
+miette = { version = "5.7.0", features = ["fancy"] }
 once_cell = "1"
-serde = { version = "1", features = ["alloc", "derive"], default_features = false }
-serde_json = { version = "1", features = ["alloc"], default_features = false }
-serde_derive = "1.0"
-
+parking_lot = "0.12"
 radix_trie = "0.2"
 rustc-hash = "1.1.0"
-miette = { version = "5.7.0", features = ["fancy"] }
-dirs = "5.0.1"
+simplelog = "0.12.0"
+serde_json = { version = "1", features = ["std"], default_features = false, optional = true }
+time = "0.3.36"
 
-# Pinned to avoid including multiple versions of a dependency
-is-terminal = "=0.4.7"
-
-# kanata-keyberon = "0.150.4"
-# kanata-parser = "0.150.4"
+# kanata-keyberon = "0.161.0"
+# kanata-parser = "0.161.0"
+# kanata-tcp-protocol = "0.161.0"
 # Uncomment below and comment out above for testing local changes.
 # Otherwise any changes to the local files will not reflect in the compiled
 # binary.
 kanata-keyberon = { path = "keyberon" }
 kanata-parser =   { path = "parser" }
+kanata-tcp-protocol = { path = "tcp_protocol" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-karabiner-driverkit = "0.1.2"
+karabiner-driverkit = "0.1.3"
+core-graphics = "0.23.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-evdev = "=0.12.0"
 signal-hook = "0.3.14"
 inotify = { version = "0.10.0", default_features = false }
-mio = { version = "0.8.4", features = ["os-poll", "os-ext"] }
+mio = { version = "0.8.11", features = ["os-poll", "os-ext"] }
 nix = { version = "0.26.1", features = ["ioctl"] }
 sd-notify = "0.4.1"
+
+evdev = ">=0.12.2" # Pinned to avoid a bug in 0.12.1, which also has a new interface
 
 [target.'cfg(target_os = "windows")'.dependencies]
 encode_unicode = "0.3.6"
@@ -63,15 +82,55 @@ winapi = { version = "0.3.9", features = [
     "timeapi",
     "mmsystem",
 ] }
-native-windows-gui = { version = "1.0.12", default_features = false }
+windows-sys = { version = "0.52.0", features = [
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Usb",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_SystemInformation",
+    "Wdk",
+    "Wdk_System",
+    "Wdk_System_SystemServices",
+], optional=true }
+native-windows-gui = { version = "1.0.13", default_features = false}
+regex = { version = "1.10.4", optional = true }
 kanata-interception = { version = "0.2.0", optional = true }
+muldiv = { version = "1.0.1", optional = true }
+strip-ansi-escapes = { version = "0.2.0", optional = true }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = { version = "2.4.2", optional = true }
+indoc = { version = "2.0.4", optional = true }
+regex = { version = "1.10.4", optional = true }
 
 [features]
 default = ["tcp_server"]
 perf_logging = []
-tcp_server = []
+tcp_server = ["serde_json"]
+win_sendinput_send_scancodes = []
+win_llhook_read_scancodes = []
+win_manifest = ["embed-resource", "indoc", "regex"]
 cmd = ["kanata-parser/cmd"]
 interception_driver = ["kanata-interception", "kanata-parser/interception_driver"]
+simulated_output = ["indoc"]
+simulated_input = ["indoc"]
+passthru_ahk = ["simulated_input","simulated_output"]
+wasm = [ "instant/wasm-bindgen" ]
+gui = ["win_manifest","kanata-parser/gui",
+  "win_sendinput_send_scancodes","win_llhook_read_scancodes",
+  "muldiv","strip-ansi-escapes",
+  "dep:windows-sys",
+  "winapi/processthreadsapi",
+  "native-windows-gui/tray-notification","native-windows-gui/message-window","native-windows-gui/menu","native-windows-gui/cursor","native-windows-gui/high-dpi","native-windows-gui/embed-resource","native-windows-gui/image-decoder","native-windows-gui/notice","native-windows-gui/animation-timer",
+]
 
 [profile.release]
 opt-level = "z"

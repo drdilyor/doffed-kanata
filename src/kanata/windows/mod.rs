@@ -4,13 +4,15 @@ use parking_lot::Mutex;
 
 use crate::kanata::*;
 
-#[cfg(not(feature = "interception_driver"))]
+#[cfg(all(feature = "simulated_input", not(feature = "interception_driver")))]
+mod exthook;
+#[cfg(all(not(feature = "simulated_input"), feature = "interception_driver"))]
+mod interception;
+#[cfg(all(not(feature = "simulated_input"), not(feature = "interception_driver")))]
 mod llhook;
 
-#[cfg(feature = "interception_driver")]
-mod interception;
-
-static PRESSED_KEYS: Lazy<Mutex<HashSet<OsCode>>> = Lazy::new(|| Mutex::new(HashSet::default()));
+pub static PRESSED_KEYS: Lazy<Mutex<HashSet<OsCode>>> =
+    Lazy::new(|| Mutex::new(HashSet::default()));
 
 pub static ALTGR_BEHAVIOUR: Lazy<Mutex<AltGrBehaviour>> =
     Lazy::new(|| Mutex::new(AltGrBehaviour::default()));
@@ -57,39 +59,64 @@ impl Kanata {
         // this should not be a problem. State does not implement Hash so can't use a HashSet. A
         // HashSet might perform worse anyway.
         for prev_state in prev_states.iter() {
-            if let State::NormalKey { keycode, coord, .. } = prev_state {
-                if !matches!(keycode, KeyCode::LShift | KeyCode::RShift)
-                    || (matches!(keycode, KeyCode::LShift)
-                        && coord.1 == u16::from(OsCode::KEY_LEFTSHIFT))
-                    || (matches!(keycode, KeyCode::RShift)
-                        && coord.1 == u16::from(OsCode::KEY_RIGHTSHIFT))
-                    || self
-                        .layout
-                        .bm()
-                        .states
-                        .iter()
-                        .filter_map(state_filter)
-                        .any(|s| s == *prev_state)
-                {
-                    continue;
+            let keycode = match prev_state {
+                State::NormalKey { keycode, coord, .. } => {
+                    // Goal of this conditional:
+                    //
+                    // Do not process state if:
+                    // - keycode is neither shift
+                    // - keycode is at the position of either shift
+                    // - state has not yet been released
+                    if !matches!(keycode, KeyCode::LShift | KeyCode::RShift)
+                        || *coord == (NORMAL_KEY_ROW, u16::from(OsCode::KEY_LEFTSHIFT))
+                        || *coord == (NORMAL_KEY_ROW, u16::from(OsCode::KEY_RIGHTSHIFT))
+                        || self
+                            .layout
+                            .bm()
+                            .states
+                            .iter()
+                            .filter_map(state_filter)
+                            .any(|s| s == *prev_state)
+                    {
+                        continue;
+                    } else {
+                        keycode
+                    }
                 }
-                log::debug!(
-                    "lsft-arrowkey workaround: releasing {keycode:?} at its typical coordinate"
-                );
-                self.layout.bm().states.retain(|s| match s {
-                    State::NormalKey {
-                        keycode: cur_kc,
-                        coord: cur_coord,
-                        ..
-                    } => cur_kc != keycode && *cur_coord != (0, u16::from(OsCode::from(keycode))),
-                    _ => true,
-                });
-                log::debug!("releasing {keycode:?} from pressed keys");
-                PRESSED_KEYS.lock().remove(&keycode.into());
-                if let Err(e) = self.kbd_out.release_key(keycode.into()) {
-                    bail!("failed to release key: {:?}", e);
+                State::FakeKey { keycode } => {
+                    // Goal of this conditional:
+                    //
+                    // Do not process state if:
+                    // - keycode is neither shift
+                    // - state has not yet been released
+                    if !matches!(keycode, KeyCode::LShift | KeyCode::RShift)
+                        || self
+                            .layout
+                            .bm()
+                            .states
+                            .iter()
+                            .filter_map(state_filter)
+                            .any(|s| s == *prev_state)
+                    {
+                        continue;
+                    } else {
+                        keycode
+                    }
                 }
-            }
+                _ => continue,
+            };
+            log::debug!("lsft-arrowkey workaround: removing {keycode:?} at its typical coordinate");
+            self.layout.bm().states.retain(|s| match s {
+                State::LayerModifier { coord, .. }
+                | State::Custom { coord, .. }
+                | State::RepeatingSequence { coord, .. }
+                | State::NormalKey { coord, .. } => {
+                    *coord != (NORMAL_KEY_ROW, u16::from(OsCode::from(keycode)))
+                }
+                _ => true,
+            });
+            log::debug!("removing {keycode:?} from pressed keys");
+            PRESSED_KEYS.lock().remove(&keycode.into());
         }
 
         prev_states.clear();
@@ -99,6 +126,34 @@ impl Kanata {
 
     #[cfg(feature = "interception_driver")]
     pub fn check_release_non_physical_shift(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(feature = "gui")]
+    pub fn live_reload(&mut self) -> Result<()> {
+        self.live_reload_requested = true;
+        self.do_live_reload(&None)?;
+        Ok(())
+    }
+    #[cfg(feature = "gui")]
+    pub fn live_reload_n(&mut self, n: usize) -> Result<()> {
+        // can't use in CustomAction::LiveReloadNum(n) due to 2nd mut borrow
+        self.live_reload_requested = true;
+        // let backup_cfg_idx = self.cur_cfg_idx;
+        match self.cfg_paths.get(n) {
+            Some(path) => {
+                self.cur_cfg_idx = n;
+                log::info!("Requested live reload of file: {}", path.display(),);
+            }
+            None => {
+                log::error!("Requested live reload of config file number {}, but only {} config files were passed", n+1, self.cfg_paths.len());
+            }
+        }
+        // if let Err(e) = self.do_live_reload(&None) {
+        // self.cur_cfg_idx = backup_cfg_idx; // restore index on fail when. TODO: add when a similar reversion is added to other custom actions
+        // return Err(e)
+        // }
+        self.do_live_reload(&None)?;
         Ok(())
     }
 }

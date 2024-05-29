@@ -1,0 +1,4 @@
+;; This config file is invalid and should be rejected
+(dofcfg)
+(dofsrc 1)
+(doflayer	(base	icon base.png 🖻 n.ico	) 1)

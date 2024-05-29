@@ -39,20 +39,31 @@
 //! The specific values in example above applies to Linux, but the same logic applies to Windows.
 pub mod sexpr;
 
-mod alloc;
+pub(crate) mod alloc;
 use alloc::*;
 
 mod key_override;
+use crate::sequences::*;
+use kanata_keyberon::chord::ChordsV2;
 pub use key_override::*;
 
 mod custom_tap_hold;
 use custom_tap_hold::*;
 
-mod list_actions;
+pub mod layer_opts;
+use layer_opts::*;
+
+pub mod list_actions;
 use list_actions::*;
 
 mod dofcfg;
 pub use dofcfg::*;
+
+mod deftemplate;
+pub use deftemplate::*;
+
+mod switch;
+pub use switch::*;
 
 use crate::custom_action::*;
 use crate::keys::*;
@@ -61,8 +72,31 @@ use crate::layers::*;
 mod error;
 pub use error::*;
 
+mod chord;
+use chord::*;
+
+mod fake_key;
+use fake_key::*;
+pub use fake_key::{FAKE_KEY_ROW, NORMAL_KEY_ROW};
+
+mod platform;
+use platform::*;
+
+mod is_a_button;
+use is_a_button::*;
+
+mod key_outputs;
+pub use key_outputs::*;
+
+mod permutations;
+use permutations::*;
+
+mod str_ext;
+pub use str_ext::*;
+
 use crate::trie::Trie;
 use anyhow::anyhow;
+use std::cell::Cell;
 use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::path::PathBuf;
@@ -74,10 +108,7 @@ type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 use kanata_keyberon::action::*;
 use kanata_keyberon::key_code::*;
 use kanata_keyberon::layout::*;
-use sexpr::SExpr;
-
-use self::sexpr::Spanned;
-use self::sexpr::TopLevel;
+use sexpr::*;
 
 #[cfg(test)]
 mod tests;
@@ -105,12 +136,32 @@ macro_rules! bail_expr {
 }
 
 #[macro_export]
+macro_rules! err_expr {
+    ($expr:expr, $fmt:expr $(,)?) => {
+        Err(ParseError::from_expr($expr, format!($fmt)))
+    };
+    ($expr:expr, $fmt:expr, $($arg:tt)*) => {
+        Err(ParseError::from_expr($expr, format!($fmt, $($arg)*)))
+    };
+}
+
+#[macro_export]
 macro_rules! bail_span {
     ($expr:expr, $fmt:expr $(,)?) => {
         return Err(ParseError::from_spanned($expr, format!($fmt)))
     };
     ($expr:expr, $fmt:expr, $($arg:tt)*) => {
         return Err(ParseError::from_spanned($expr, format!($fmt, $($arg)*)))
+    };
+}
+
+#[macro_export]
+macro_rules! err_span {
+    ($expr:expr, $fmt:expr $(,)?) => {
+        Err(ParseError::from_spanned($expr, format!($fmt)))
+    };
+    ($expr:expr, $fmt:expr, $($arg:tt)*) => {
+        Err(ParseError::from_spanned($expr, format!($fmt, $($arg)*)))
     };
 }
 
@@ -136,7 +187,8 @@ macro_rules! anyhow_span {
 
 pub struct FileContentProvider<'a> {
     /// A function to load content of a file from a filepath.
-    /// Optionally, it could implement caching and a mechanism preventing "file" and "./file" from loading twice.
+    /// Optionally, it could implement caching and a mechanism preventing "file" and "./file"
+    /// from loading twice.
     get_file_content_fn: &'a mut dyn FnMut(&Path) -> std::result::Result<String, String>,
 }
 
@@ -153,9 +205,9 @@ impl<'a> FileContentProvider<'a> {
     }
 }
 
-pub type KanataAction = Action<'static, &'static &'static [&'static CustomAction]>;
-type KLayout =
-    Layout<'static, KEYS_IN_ROW, 2, ACTUAL_NUM_LAYERS, &'static &'static [&'static CustomAction]>;
+pub type KanataCustom = &'static &'static [&'static CustomAction];
+pub type KanataAction = Action<'static, KanataCustom>;
+type KLayout = Layout<'static, KEYS_IN_ROW, 2, KanataCustom>;
 
 type TapHoldCustomFunc =
     fn(
@@ -163,8 +215,7 @@ type TapHoldCustomFunc =
         &Allocations,
     ) -> &'static (dyn Fn(QueuedIter) -> (Option<WaitingAction>, bool) + Send + Sync);
 
-pub type BorrowedKLayout<'a> =
-    Layout<'a, KEYS_IN_ROW, 2, ACTUAL_NUM_LAYERS, &'a &'a [&'a CustomAction]>;
+pub type BorrowedKLayout<'a> = Layout<'a, KEYS_IN_ROW, 2, &'a &'a [&'a CustomAction]>;
 pub type KeySeqsToFKeys = Trie;
 
 pub struct KanataLayout {
@@ -204,64 +255,134 @@ pub struct Cfg {
     /// Layer info used for printing to the logs.
     pub layer_info: Vec<LayerInfo>,
     /// Configuration items in `dofcfg`.
-    pub items: CfgOptions,
+    pub options: CfgOptions,
     /// The keyberon layout state machine struct.
     pub layout: KanataLayout,
     /// Sequences defined in `dofseq`.
     pub sequences: KeySeqsToFKeys,
     /// Overrides defined in `dofoverrides`.
     pub overrides: Overrides,
+    /// Mapping of fake key name to its column in the fake key row.
+    pub fake_keys: HashMap<String, usize>,
+    /// The maximum value of switch's key-timing item in the configuration.
+    pub switch_max_key_timing: u16,
 }
 
 /// Parse a new configuration from a file.
 pub fn new_from_file(p: &Path) -> MResult<Cfg> {
-    let (items, mapped_keys, layer_info, key_outputs, layout, sequences, overrides) = parse_cfg(p)?;
+    parse_cfg(p)
+}
+
+pub fn new_from_str(cfg_text: &str) -> MResult<Cfg> {
+    let mut s = ParserState::default();
+    let icfg = parse_cfg_raw_string(
+        cfg_text,
+        &mut s,
+        &PathBuf::from("configuration"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| Err("include is not supported".into()),
+        },
+        DEF_LOCAL_KEYS,
+        Err("environment variables are not supported".into()),
+    )?;
+    let (layers, allocations) = icfg.klayers.get();
+    let key_outputs = create_key_outputs(&layers, &icfg.overrides, &icfg.chords_v2);
+    let switch_max_key_timing = s.switch_max_key_timing.get();
+    let mut layout = KanataLayout::new(
+        Layout::new_with_trans_action_settings(
+            s.a.sref(s.dofsrc_layer),
+            layers,
+            icfg.options.trans_resolution_behavior_v2,
+            icfg.options.delegate_to_first_layer,
+        ),
+        allocations,
+    );
+    layout.bm().chords_v2 = icfg.chords_v2;
+    layout.bm().quick_tap_hold_timeout = icfg.options.concurrent_tap_hold;
+    layout.bm().oneshot.on_press_release_delay = icfg.options.rapid_event_delay;
+    let mut fake_keys: HashMap<String, usize> = s
+        .virtual_keys
+        .iter()
+        .map(|(k, v)| (k.clone(), v.0))
+        .collect();
+    fake_keys.shrink_to_fit();
     log::info!("config file is valid");
     Ok(Cfg {
-        items,
-        mapped_keys,
-        layer_info,
+        options: icfg.options,
+        mapped_keys: icfg.mapped_keys,
+        layer_info: icfg.layer_info,
         key_outputs,
         layout,
-        sequences,
-        overrides,
+        sequences: icfg.sequences,
+        overrides: icfg.overrides,
+        fake_keys,
+        switch_max_key_timing,
     })
 }
 
 pub type MappedKeys = HashSet<OsCode>;
-// Note: this uses a Vec inside the HashMap instead of a HashSet because ordering matters, e.g. for
-// chords like `S-b`, we want to ensure that `b` is checked first because key repeat for `b` is
-// useful while it is not useful for shift. The outputs should be iterated over in reverse order.
-pub type KeyOutputs = Vec<HashMap<OsCode, Vec<OsCode>>>;
 
 #[derive(Debug)]
 pub struct LayerInfo {
     pub name: String,
     pub cfg_text: String,
+    pub icon: Option<String>,
 }
 
 #[allow(clippy::type_complexity)] // return type is not pub
-fn parse_cfg(
-    p: &Path,
-) -> MResult<(
-    CfgOptions,
-    MappedKeys,
-    Vec<LayerInfo>,
-    KeyOutputs,
-    KanataLayout,
-    KeySeqsToFKeys,
-    Overrides,
-)> {
-    let mut s = ParsedState::default();
-    let (cfg, src, layer_info, klayers, seqs, overrides) = parse_cfg_raw(p, &mut s)?;
-    let key_outputs = create_key_outputs(&klayers, &overrides);
-    let mut layout = create_layout(klayers, s.a);
-    layout.bm().quick_tap_hold_timeout = cfg.concurrent_tap_hold;
-    Ok((cfg, src, layer_info, key_outputs, layout, seqs, overrides))
+fn parse_cfg(p: &Path) -> MResult<Cfg> {
+    let mut s = ParserState::default();
+    let icfg = parse_cfg_raw(p, &mut s)?;
+    let (layers, allocations) = icfg.klayers.get();
+    let key_outputs = create_key_outputs(&layers, &icfg.overrides, &icfg.chords_v2);
+    let switch_max_key_timing = s.switch_max_key_timing.get();
+    let mut layout = KanataLayout::new(
+        Layout::new_with_trans_action_settings(
+            s.a.sref(s.dofsrc_layer),
+            layers,
+            icfg.options.trans_resolution_behavior_v2,
+            icfg.options.delegate_to_first_layer,
+        ),
+        allocations,
+    );
+    layout.bm().chords_v2 = icfg.chords_v2;
+    layout.bm().quick_tap_hold_timeout = icfg.options.concurrent_tap_hold;
+    layout.bm().oneshot.on_press_release_delay = icfg.options.rapid_event_delay;
+    let mut fake_keys: HashMap<String, usize> = s
+        .virtual_keys
+        .iter()
+        .map(|(k, v)| (k.clone(), v.0))
+        .collect();
+    fake_keys.shrink_to_fit();
+    log::info!("config file is valid");
+    Ok(Cfg {
+        options: icfg.options,
+        mapped_keys: icfg.mapped_keys,
+        layer_info: icfg.layer_info,
+        key_outputs,
+        layout,
+        sequences: icfg.sequences,
+        overrides: icfg.overrides,
+        fake_keys,
+        switch_max_key_timing,
+    })
 }
 
-#[cfg(all(not(feature = "interception_driver"), target_os = "windows"))]
+#[cfg(all(
+    not(feature = "interception_driver"),
+    any(
+        not(feature = "win_llhook_read_scancodes"),
+        not(feature = "win_sendinput_send_scancodes")
+    ),
+    target_os = "windows"
+))]
 const DEF_LOCAL_KEYS: &str = "doflocalkeys-win";
+#[cfg(all(
+    feature = "win_llhook_read_scancodes",
+    feature = "win_sendinput_send_scancodes",
+    target_os = "windows"
+))]
+const DEF_LOCAL_KEYS: &str = "doflocalkeys-winiov2";
 #[cfg(all(feature = "interception_driver", target_os = "windows"))]
 const DEF_LOCAL_KEYS: &str = "doflocalkeys-wintercept";
 #[cfg(target_os = "macos")]
@@ -269,18 +390,23 @@ const DEF_LOCAL_KEYS: &str = "doflocalkeys-macos";
 #[cfg(any(target_os = "linux", target_os = "unknown"))]
 const DEF_LOCAL_KEYS: &str = "doflocalkeys-linux";
 
+#[derive(Debug)]
+pub struct IntermediateCfg {
+    pub options: CfgOptions,
+    pub mapped_keys: MappedKeys,
+    pub layer_info: Vec<LayerInfo>,
+    pub klayers: KanataLayers,
+    pub sequences: KeySeqsToFKeys,
+    pub overrides: Overrides,
+    pub chords_v2: Option<ChordsV2<'static, KanataCustom>>,
+}
+
+// A snapshot of enviroment variables, or an error message with an explanation
+// why env vars are not not supported.
+pub type EnvVars = std::result::Result<Vec<(String, String)>, String>;
+
 #[allow(clippy::type_complexity)] // return type is not pub
-fn parse_cfg_raw(
-    p: &Path,
-    s: &mut ParsedState,
-) -> MResult<(
-    CfgOptions,
-    MappedKeys,
-    Vec<LayerInfo>,
-    Box<KanataLayers>,
-    KeySeqsToFKeys,
-    Overrides,
-)> {
+fn parse_cfg_raw(p: &Path, s: &mut ParserState) -> MResult<IntermediateCfg> {
     const INVALID_PATH_ERROR: &str = "The provided config file path is not valid";
 
     let mut loaded_files: HashSet<PathBuf> = HashSet::default();
@@ -294,18 +420,19 @@ fn parse_cfg_raw(
             relative_main_cfg_file_dir.join(filepath)
         };
 
-        // Forbid loading the same file multiple times.
-        // This prevents a potential recursive infinite loop of includes
-        // (if includes within includes were to be allowed).
         let abs_filepath: PathBuf = filepath_relative_to_loaded_kanata_cfg
             .canonicalize()
             .map_err(|e| {
                 format!(
-                    "Failed to resolve absolute path: {}: {}",
+                    "Failed to resolve relative path: {}: {}",
                     filepath_relative_to_loaded_kanata_cfg.to_string_lossy(),
                     e
                 )
             })?;
+
+        // Forbid loading the same file multiple times.
+        // This prevents a potential recursive infinite loop of includes
+        // (if includes within includes were to be allowed).
         if !loaded_files.insert(abs_filepath.clone()) {
             return Err("The provided config file was already included before".to_string());
         };
@@ -325,8 +452,17 @@ fn parse_cfg_raw(
         .get_file_content(&cfg_file_name)
         .map_err(|e| miette::miette!(e))?;
 
-    parse_cfg_raw_string(&text, s, p, &mut file_content_provider, DEF_LOCAL_KEYS)
-        .map_err(|e| e.into())
+    let env_vars: EnvVars = Ok(std::env::vars().collect());
+
+    parse_cfg_raw_string(
+        &text,
+        s,
+        p,
+        &mut file_content_provider,
+        DEF_LOCAL_KEYS,
+        env_vars,
+    )
+    .map_err(|e| e.into())
 }
 
 fn expand_includes(
@@ -357,8 +493,9 @@ fn expand_includes(
                     "Multiple filepaths are not allowed in include blocks. If you want to include multiple files, create a new include block for each of them."
                 )
             };
-            let include_file_path = spanned_filepath.t.trim_matches('"');
-            let file_content = file_content_provider.get_file_content(Path::new(include_file_path)).map_err(|e| anyhow_span!(spanned_filepath, "{e}"))?;
+            let include_file_path = spanned_filepath.t.trim_atom_quotes();
+            let file_content = file_content_provider.get_file_content(Path::new(include_file_path))
+                .map_err(|e| anyhow_span!(spanned_filepath, "{e}"))?;
             let tree = sexpr::parse(&file_content, include_file_path)?;
             acc.extend(tree);
 
@@ -370,23 +507,44 @@ fn expand_includes(
     })
 }
 
+const DEFLAYER: &str = "doflayer";
+const DEFLAYER_MAPPED: &str = "doflayermap";
+const DEFLOCALKEYS_VARIANTS: &[&str] = &[
+    "doflocalkeys-win",
+    "doflocalkeys-winiov2",
+    "doflocalkeys-wintercept",
+    "doflocalkeys-linux",
+    "doflocalkeys-macos",
+];
+
+#[derive(Debug, Clone)]
+pub struct LspHintInactiveCode {
+    pub span: Span,
+    pub reason: String,
+}
+
 #[allow(clippy::type_complexity)] // return type is not pub
 pub fn parse_cfg_raw_string(
     text: &str,
-    s: &mut ParsedState,
+    s: &mut ParserState,
     cfg_path: &Path,
     file_content_provider: &mut FileContentProvider,
     def_local_keys_variant_to_apply: &str,
-) -> Result<(
-    CfgOptions,
-    MappedKeys,
-    Vec<LayerInfo>,
-    Box<KanataLayers>,
-    KeySeqsToFKeys,
-    Overrides,
-)> {
+    env_vars: EnvVars,
+) -> Result<IntermediateCfg> {
+    let mut lsp_hint_inactive_code: Vec<LspHintInactiveCode> = vec![];
+
     let spanned_root_exprs = sexpr::parse(text, &cfg_path.to_string_lossy())
-        .and_then(|xs| expand_includes(xs, file_content_provider))?;
+        .and_then(|xs| expand_includes(xs, file_content_provider))
+        .and_then(|xs| {
+            filter_platform_specific_cfg(
+                xs,
+                def_local_keys_variant_to_apply,
+                &mut lsp_hint_inactive_code,
+            )
+        })
+        .and_then(|xs| filter_env_specific_cfg(xs, &env_vars, &mut lsp_hint_inactive_code))
+        .and_then(expand_templates)?;
 
     if let Some(spanned) = spanned_root_exprs
         .iter()
@@ -401,24 +559,31 @@ pub fn parse_cfg_raw_string(
 
     let mut local_keys: Option<HashMap<String, OsCode>> = None;
     clear_custom_str_oscode_mapping();
-    for def_local_keys_variant in [
-        "doflocalkeys-win",
-        "doflocalkeys-wintercept",
-        "doflocalkeys-linux",
-        "doflocalkeys-macos",
-    ] {
-        if let Some(result) = root_exprs
+    for def_local_keys_variant in DEFLOCALKEYS_VARIANTS {
+        if let Some((result, span)) = spanned_root_exprs
             .iter()
-            .find(gen_first_atom_filter(def_local_keys_variant))
-            .map(|custom_keys| parse_deflocalkeys(def_local_keys_variant, custom_keys))
+            .find(gen_first_atom_filter_spanned(def_local_keys_variant))
+            .map(|x| {
+                (
+                    parse_deflocalkeys(def_local_keys_variant, &x.t),
+                    x.span.clone(),
+                )
+            })
         {
             let mapping = result?;
-            if def_local_keys_variant == def_local_keys_variant_to_apply {
+            if def_local_keys_variant == &def_local_keys_variant_to_apply {
                 assert!(
                     local_keys.is_none(),
                     ">1 mutually exclusive doflocalkeys variants were parsed"
                 );
                 local_keys = Some(mapping);
+            } else {
+                lsp_hint_inactive_code.push(LspHintInactiveCode {
+                    span,
+                    reason: format!(
+                        "Another localkeys variant is currently active: {def_local_keys_variant_to_apply}"
+                    ),
+                })
             }
         }
 
@@ -451,7 +616,6 @@ pub fn parse_cfg_raw_string(
             "Only one dofcfg is allowed, found more. Delete the extras."
         )
     }
-
     let src_expr = root_exprs
         .iter()
         .find(gen_first_atom_filter("dofsrc"))
@@ -466,31 +630,40 @@ pub fn parse_cfg_raw_string(
             "Exactly one dofsrc is allowed, found more. Delete the extras."
         )
     }
-    let (src, mapping_order) = parse_defsrc(src_expr, &cfg)?;
+    let (mut mapped_keys, mapping_order) = parse_defsrc(src_expr, &cfg)?;
 
-    let doflayer_filter = gen_first_atom_filter("doflayer");
+    let var_exprs = root_exprs
+        .iter()
+        .filter(gen_first_atom_filter("dofvar"))
+        .collect::<Vec<_>>();
+    parse_vars(&var_exprs, s)?;
+
+    let doflayer_labels = [DEFLAYER, DEFLAYER_MAPPED];
+    let doflayer_spanned_filter = |exprs: &&Spanned<Vec<SExpr>>| -> bool {
+        if exprs.t.is_empty() {
+            return false;
+        }
+        if let SExpr::Atom(atom) = &exprs.t[0] {
+            doflayer_labels.contains(&atom.t.as_str())
+        } else {
+            false
+        }
+    };
     let layer_exprs = spanned_root_exprs
         .iter()
-        .filter(gen_first_atom_filter_spanned("doflayer"))
+        .filter(doflayer_spanned_filter)
         .cloned()
+        .map(|e| match e.t[0].atom(None).unwrap() {
+            DEFLAYER => SpannedLayerExprs::DefsrcMapping(e.clone()),
+            DEFLAYER_MAPPED => SpannedLayerExprs::CustomMapping(e.clone()),
+            _ => unreachable!(),
+        })
         .collect::<Vec<_>>();
     if layer_exprs.is_empty() {
         bail!("No doflayer expressions exist. At least one layer must be defined.")
     }
-    if layer_exprs.len() > MAX_LAYERS {
-        let spanned = spanned_root_exprs
-            .iter()
-            .filter(gen_first_atom_filter_spanned("doflayer"))
-            .nth(MAX_LAYERS)
-            .expect(">25 layers");
-        bail_span!(
-            spanned,
-            "Exceeded the maximum number of layers ({MAX_LAYERS}), the layer shown is #{}",
-            MAX_LAYERS + 1
-        )
-    }
 
-    let layer_idxs = parse_layer_indexes(&layer_exprs, mapping_order.len())?;
+    let (layer_idxs, layer_icons) = parse_layer_indexes(&layer_exprs, mapping_order.len(), s)?;
     let mut sorted_idxs: Vec<(&String, &usize)> =
         layer_idxs.iter().map(|tuple| (tuple.0, tuple.1)).collect();
 
@@ -502,39 +675,58 @@ pub fn parse_cfg_raw_string(
     let layer_names = sorted_idxs
         .into_iter()
         .map(|(name, _)| (*name).clone())
-        .flat_map(|s| {
-            // Duplicate the same layer for `layer_strings` because the keyberon layout itself has
-            // two versions of each layer.
-            std::iter::repeat(s).take(2)
-        })
         .collect::<Vec<_>>();
 
+    let doflayer_filter = |exprs: &&Vec<SExpr>| -> bool {
+        if exprs.is_empty() {
+            return false;
+        }
+        if let SExpr::Atom(atom) = &exprs[0] {
+            doflayer_labels.contains(&atom.t.as_str())
+        } else {
+            false
+        }
+    };
     let layer_strings = spanned_root_exprs
         .iter()
         .filter(|expr| doflayer_filter(&&expr.t))
         .map(|expr| expr.span.file_content()[expr.span.clone()].to_string())
-        .flat_map(|s| {
-            // Duplicate the same layer for `layer_strings` because the keyberon layout itself has
-            // two versions of each layer.
-            std::iter::repeat(s).take(2)
-        })
         .collect::<Vec<_>>();
 
     let layer_info: Vec<LayerInfo> = layer_names
         .into_iter()
         .zip(layer_strings)
-        .map(|(name, cfg_text)| LayerInfo { name, cfg_text })
+        .map(|(name, cfg_text)| LayerInfo {
+            name: name.clone(),
+            cfg_text,
+            icon: layer_icons.get(&name).unwrap_or(&None).clone(),
+        })
         .collect();
 
-    let dofsrc_layer = parse_defsrc_layer(src_expr, &mapping_order, s);
+    let dofsrc_layer = create_defsrc_layer();
 
+    let doflayer_filter = |exprs: &&Vec<SExpr>| -> bool {
+        if exprs.is_empty() {
+            return false;
+        }
+        if let SExpr::Atom(atom) = &exprs[0] {
+            doflayer_labels.contains(&atom.t.as_str())
+        } else {
+            false
+        }
+    };
     let layer_exprs = root_exprs
         .iter()
-        .filter(&doflayer_filter)
+        .filter(doflayer_filter)
         .cloned()
+        .map(|e| match e[0].atom(None).unwrap() {
+            DEFLAYER => LayerExprs::DefsrcMapping(e.clone()),
+            DEFLAYER_MAPPED => LayerExprs::CustomMapping(e.clone()),
+            _ => unreachable!(),
+        })
         .collect::<Vec<_>>();
 
-    *s = ParsedState {
+    *s = ParserState {
         a: s.a.clone(),
         layer_exprs,
         layer_idxs,
@@ -559,14 +751,11 @@ pub fn parse_cfg_raw_string(
         delegate_to_first_layer: cfg.delegate_to_first_layer,
         default_sequence_timeout: cfg.sequence_timeout,
         default_sequence_input_mode: cfg.sequence_input_mode,
+        block_unmapped_keys: cfg.block_unmapped_keys,
+        lsp_hint_inactive_code,
+        vars: s.vars.clone(),
         ..Default::default()
     };
-
-    let var_exprs = root_exprs
-        .iter()
-        .filter(gen_first_atom_filter("dofvar"))
-        .collect::<Vec<_>>();
-    parse_vars(&var_exprs, s)?;
 
     let chords_exprs = spanned_root_exprs
         .iter()
@@ -580,22 +769,29 @@ pub fn parse_cfg_raw_string(
         .collect::<Vec<_>>();
     parse_fake_keys(&fake_keys_exprs, s)?;
 
+    let vkeys_exprs = root_exprs
+        .iter()
+        .filter(gen_first_atom_filter("defvirtualkeys"))
+        .collect::<Vec<_>>();
+    parse_virtual_keys(&vkeys_exprs, s)?;
+
     let sequence_exprs = root_exprs
         .iter()
         .filter(gen_first_atom_filter("dofseq"))
         .collect::<Vec<_>>();
     let sequences = parse_sequences(&sequence_exprs, s)?;
 
-    let alias_exprs = root_exprs
+    let alias_exprs = spanned_root_exprs
         .iter()
-        .filter(gen_first_atom_start_filter("dofalias"))
+        .filter(gen_first_atom_start_filter_spanned("dofalias"))
         .collect::<Vec<_>>();
-    parse_aliases(&alias_exprs, s)?;
+    parse_aliases(&alias_exprs, s, &env_vars)?;
 
-    let mut klayers = parse_layers(s)?;
+    let mut klayers = parse_layers(s, &mut mapped_keys, &cfg)?;
 
     resolve_chord_groups(&mut klayers, s)?;
-
+    let layers = s.a.bref_slice(klayers);
+    s.layers = layers;
     let override_exprs = root_exprs
         .iter()
         .filter(gen_first_atom_filter("dofoverrides"))
@@ -616,7 +812,48 @@ pub fn parse_cfg_raw_string(
         }
     };
 
-    Ok((cfg, src, layer_info, klayers, sequences, overrides))
+    s.trans_forbidden_reason = Some("Transparent action is forbidden within chordsv2");
+    let chords_v2_exprs = root_exprs
+        .iter()
+        .filter(gen_first_atom_filter("dofchordsv2-experimental"))
+        .collect::<Vec<_>>();
+    let chords_v2 = match chords_v2_exprs.len() {
+        0 => None,
+        1 => {
+            let cfks = parse_defchordv2(chords_v2_exprs[0], s)?;
+            Some(ChordsV2::new(cfks, cfg.chords_v2_min_idle))
+        }
+        _ => {
+            let spanned = spanned_root_exprs
+                .iter()
+                .filter(gen_first_atom_filter_spanned("dofchordsv2-experimental"))
+                .nth(1)
+                .expect("> 2 overrides");
+            bail_span!(
+                spanned,
+                "Only one dofchordsv2 allowed, found more.\nDelete the extras."
+            )
+        }
+    };
+    s.trans_forbidden_reason = None;
+    if chords_v2.is_some() && !cfg.concurrent_tap_hold {
+        return Err(anyhow!(
+            "With dofchordsv2 defined, concurrent-tap-hold in dofcfg must be true.\n\
+            It is currently false or unspecified."
+        )
+        .into());
+    }
+
+    let klayers = unsafe { KanataLayers::new(layers, s.a.clone()) };
+    Ok(IntermediateCfg {
+        options: cfg,
+        mapped_keys,
+        layer_info,
+        klayers,
+        sequences,
+        overrides,
+        chords_v2,
+    })
 }
 
 fn error_on_unknown_top_level_atoms(exprs: &[Spanned<Vec<SExpr>>]) -> Result<()> {
@@ -635,17 +872,22 @@ fn error_on_unknown_top_level_atoms(exprs: &[Spanned<Vec<SExpr>>]) -> Result<()>
                 | "dofalias"
                 | "dofaliasenvcond"
                 | "dofsrc"
-                | "doflayer"
+                | DEFLAYER
+                | DEFLAYER_MAPPED
                 | "dofoverrides"
                 | "doflocalkeys-macos"
                 | "doflocalkeys-linux"
                 | "doflocalkeys-win"
+                | "doflocalkeys-winiov2"
                 | "doflocalkeys-wintercept"
                 | "doffakekeys"
+                | "defvirtualkeys"
                 | "dofchords"
                 | "dofvar"
+                | "deftemplate"
+                | "dofchordsv2-experimental"
                 | "dofseq" => Ok(()),
-                _ => bail_span!(expr, "Found unknown configuration item"),
+                _ => err_span!(expr, "Found unknown configuration item"),
             })
             .ok_or_else(|| {
                 anyhow_expr!(
@@ -677,13 +919,13 @@ fn gen_first_atom_filter(a: &str) -> impl Fn(&&Vec<SExpr>) -> bool {
 /// Return a closure that filters a root expression by the content of the first element. The
 /// closure returns true if the first element is an atom that starts with the input `a` and false
 /// otherwise.
-fn gen_first_atom_start_filter(a: &str) -> impl Fn(&&Vec<SExpr>) -> bool {
+fn gen_first_atom_start_filter_spanned(a: &str) -> impl Fn(&&Spanned<Vec<SExpr>>) -> bool {
     let a = a.to_owned();
     move |expr| {
-        if expr.is_empty() {
+        if expr.t.is_empty() {
             return false;
         }
-        if let SExpr::Atom(atom) = &expr[0] {
+        if let SExpr::Atom(atom) = &expr.t[0] {
             atom.t.starts_with(&a)
         } else {
             false
@@ -737,12 +979,7 @@ fn parse_deflocalkeys(
         let key = key_expr.atom(None).ok_or_else(|| {
             anyhow_expr!(key_expr, "No lists are allowed in {def_local_keys_variant}")
         })?;
-        if str_to_oscode(key).is_some() {
-            bail_expr!(
-                key_expr,
-                "Cannot use {key} in {def_local_keys_variant} because it is a default key name"
-            );
-        } else if localkeys.contains_key(key) {
+        if localkeys.contains_key(key) {
             bail_expr!(
                 key_expr,
                 "Duplicate {key} found in {def_local_keys_variant}"
@@ -816,18 +1053,75 @@ type Aliases = HashMap<String, &'static KanataAction>;
 /// - All layers have the same number of items as the dofsrc,
 /// - There are no duplicate layer names
 /// - Parentheses weren't used directly or kmonad-style escapes for parentheses weren't used.
-fn parse_layer_indexes(exprs: &[Spanned<Vec<SExpr>>], expected_len: usize) -> Result<LayerIndexes> {
+fn parse_layer_indexes(
+    exprs: &[SpannedLayerExprs],
+    expected_len: usize,
+    s: &mut ParserState,
+) -> Result<(LayerIndexes, LayerIcons)> {
     let mut layer_indexes = HashMap::default();
-    for (i, expr) in exprs.iter().enumerate() {
-        let mut subexprs = check_first_expr(expr.t.iter(), "doflayer")?;
+    let mut layer_icons = HashMap::default();
+    for (i, expr_type) in exprs.iter().enumerate() {
+        let (mut subexprs, expr, do_element_count_check) = match expr_type {
+            SpannedLayerExprs::DefsrcMapping(e) => {
+                (check_first_expr(e.t.iter(), DEFLAYER)?, e, true)
+            }
+            SpannedLayerExprs::CustomMapping(e) => {
+                (check_first_expr(e.t.iter(), DEFLAYER_MAPPED)?, e, false)
+            }
+        };
         let layer_expr = subexprs.next().ok_or_else(|| {
             anyhow_span!(expr, "doflayer requires a name and {expected_len} item(s)")
         })?;
-        let layer_name = layer_expr
-            .atom(None)
-            .ok_or_else(|| anyhow_expr!(layer_expr, "layer name after doflayer must be a string"))?
-            .to_owned();
-        if layer_indexes.get(&layer_name).is_some() {
+        let (layer_name, icon) = match expr_type {
+            SpannedLayerExprs::DefsrcMapping(_) => {
+                let name = layer_expr.atom(s.vars());
+                match name {
+                    Some(name) => (name.to_owned(), None),
+                    None => {
+                        // unwrap: this **must** be a list due to atom() call above.
+                        let list = layer_expr.list(s.vars()).unwrap();
+                        let name = list.first().ok_or_else(|| anyhow_expr!(
+                                layer_expr,
+                                "doflayer requires a string name within this pair of parentheses (or a string name without any)"
+                            ))?
+                            .atom(s.vars()).ok_or_else(|| anyhow_expr!(
+                                layer_expr,
+                                "layer name after {DEFLAYER} must be a string when enclosed within one pair of parentheses"
+                            ))?;
+                        let layer_opts = parse_layer_opts(&list[1..])?;
+                        let icon = layer_opts
+                            .get(DEFLAYER_ICON[0])
+                            .map(|icon_s| icon_s.trim_atom_quotes().to_owned());
+                        (name.to_owned(), icon)
+                    }
+                }
+            }
+            SpannedLayerExprs::CustomMapping(_) => {
+                let list = layer_expr
+                    .list(None)
+                    .ok_or_else(|| {
+                        anyhow_expr!(
+                            layer_expr,
+                            "layer name after {DEFLAYER_MAPPED} must be in parentheses"
+                        )
+                    })?
+                    .to_owned();
+                let name = list.first()
+                    .and_then(|expr| expr.atom(s.vars()))
+                    .ok_or_else(|| anyhow_expr!(
+                        layer_expr,
+                        "layer name after {DEFLAYER_MAPPED} must be a string within one pair of parentheses"
+                    ))?;
+
+                // add hashmap for future options, currently only parse icons
+                let layer_opts = parse_layer_opts(&list[1..])?;
+                let icon = layer_opts
+                    .get(DEFLAYER_ICON[0])
+                    .map(|icon_s| icon_s.trim_atom_quotes().to_owned());
+                (name.to_owned(), icon)
+            }
+        };
+        if layer_indexes.contains_key(&layer_name) {
             bail_expr!(layer_expr, "duplicate layer name: {}", layer_name);
         }
         // Check if user tried to use parentheses directly - `(` and `)`
@@ -856,29 +1150,45 @@ fn parse_layer_indexes(exprs: &[Spanned<Vec<SExpr>>], expected_len: usize) -> Re
                 }
             }
         }
-        let num_actions = expr.t.len() - 2;
-        if num_actions != expected_len {
-            bail_span!(
-                expr,
-                "Layer {} has {} item(s), but requires {} to match dofsrc",
-                layer_name,
-                num_actions,
-                expected_len
-            )
+        if do_element_count_check {
+            let num_actions = expr.t.len() - 2;
+            if num_actions != expected_len {
+                bail_span!(
+                    expr,
+                    "Layer {} has {} item(s), but requires {} to match dofsrc",
+                    layer_name,
+                    num_actions,
+                    expected_len
+                )
+            }
         }
-        layer_indexes.insert(layer_name, i);
+        layer_indexes.insert(layer_name.clone(), i);
+        layer_icons.insert(layer_name, icon);
     }
 
-    Ok(layer_indexes)
+    Ok((layer_indexes, layer_icons))
+}
+
+#[derive(Debug, Clone)]
+enum LayerExprs {
+    DefsrcMapping(Vec<SExpr>),
+    CustomMapping(Vec<SExpr>),
+}
+
+#[derive(Debug, Clone)]
+enum SpannedLayerExprs {
+    DefsrcMapping(Spanned<Vec<SExpr>>),
+    CustomMapping(Spanned<Vec<SExpr>>),
 }
 
 #[derive(Debug)]
-pub struct ParsedState {
-    layer_exprs: Vec<Vec<SExpr>>,
+pub struct ParserState {
+    layers: KLayers,
+    layer_exprs: Vec<LayerExprs>,
     aliases: Aliases,
     layer_idxs: LayerIndexes,
     mapping_order: Vec<usize>,
-    fake_keys: HashMap<String, (usize, &'static KanataAction)>,
+    virtual_keys: HashMap<String, (usize, &'static KanataAction)>,
     chord_groups: HashMap<String, ChordGroup>,
     dofsrc_layer: [KanataAction; KEYS_IN_ROW],
     vars: HashMap<String, SExpr>,
@@ -886,31 +1196,40 @@ pub struct ParsedState {
     delegate_to_first_layer: bool,
     default_sequence_timeout: u16,
     default_sequence_input_mode: SequenceInputMode,
+    block_unmapped_keys: bool,
+    switch_max_key_timing: Cell<u16>,
+    trans_forbidden_reason: Option<&'static str>,
+    pub lsp_hint_inactive_code: Vec<LspHintInactiveCode>,
     a: Arc<Allocations>,
 }
 
-impl ParsedState {
+impl ParserState {
     fn vars(&self) -> Option<&HashMap<String, SExpr>> {
         Some(&self.vars)
     }
 }
 
-impl Default for ParsedState {
+impl Default for ParserState {
     fn default() -> Self {
         let default_cfg = CfgOptions::default();
         Self {
+            layers: Default::default(),
             layer_exprs: Default::default(),
             aliases: Default::default(),
             layer_idxs: Default::default(),
             mapping_order: Default::default(),
-            dofsrc_layer: [KanataAction::Trans; KEYS_IN_ROW],
-            fake_keys: Default::default(),
+            dofsrc_layer: [KanataAction::NoOp; KEYS_IN_ROW],
+            virtual_keys: Default::default(),
             chord_groups: Default::default(),
             vars: Default::default(),
             is_cmd_enabled: default_cfg.enable_cmd,
             delegate_to_first_layer: default_cfg.delegate_to_first_layer,
             default_sequence_timeout: default_cfg.sequence_timeout,
             default_sequence_input_mode: default_cfg.sequence_input_mode,
+            block_unmapped_keys: default_cfg.block_unmapped_keys,
+            switch_max_key_timing: Cell::new(0),
+            trans_forbidden_reason: None,
+            lsp_hint_inactive_code: Default::default(),
             a: unsafe { Allocations::new() },
         }
     }
@@ -922,11 +1241,11 @@ struct ChordGroup {
     name: String,
     keys: Vec<String>,
     coords: Vec<((u8, u16), ChordKeys)>,
-    chords: HashMap<u32, SExpr>,
+    chords: HashMap<u128, SExpr>,
     timeout: u16,
 }
 
-fn parse_vars(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
+fn parse_vars(exprs: &[&Vec<SExpr>], s: &mut ParserState) -> Result<()> {
     for expr in exprs {
         let mut subexprs = check_first_expr(expr.iter(), "dofvar")?;
         // Read k-v pairs from the configuration
@@ -936,13 +1255,13 @@ fn parse_vars(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
                 _ => bail_expr!(var_name_expr, "variable name must not be a list"),
             };
             let var_expr = match subexprs.next() {
-                Some(v) => v,
-                None => bail_expr!(
-                    var_name_expr,
-                    "variable key name has no action - you should add an action."
-                ),
+                Some(v) => match v {
+                    SExpr::Atom(_) => v.clone(),
+                    SExpr::List(l) => parse_list_var(l, &s.vars),
+                },
+                None => bail_expr!(var_name_expr, "variable name must have a subsequent value"),
             };
-            if s.vars.insert(var_name.into(), var_expr.clone()).is_some() {
+            if s.vars.insert(var_name.into(), var_expr).is_some() {
                 bail_expr!(var_name_expr, "duplicate variable name: {}", var_name);
             }
         }
@@ -950,17 +1269,50 @@ fn parse_vars(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
     Ok(())
 }
 
+fn parse_list_var(expr: &Spanned<Vec<SExpr>>, vars: &HashMap<String, SExpr>) -> SExpr {
+    let ret = match expr.t.first() {
+        Some(SExpr::Atom(a)) => match a.t.as_str() {
+            "concat" => {
+                let mut concat_str = String::new();
+                let visitees = &expr.t[1..];
+                push_all_atoms(visitees, vars, &mut concat_str);
+                SExpr::Atom(Spanned {
+                    span: expr.span.clone(),
+                    t: concat_str,
+                })
+            }
+            _ => SExpr::List(expr.clone()),
+        },
+        _ => SExpr::List(expr.clone()),
+    };
+    ret
+}
+
+fn push_all_atoms(exprs: &[SExpr], vars: &HashMap<String, SExpr>, pusheen: &mut String) {
+    for expr in exprs {
+        if let Some(a) = expr.atom(Some(vars)) {
+            pusheen.push_str(a.trim_atom_quotes());
+        } else if let Some(l) = expr.list(Some(vars)) {
+            push_all_atoms(l, vars, pusheen);
+        }
+    }
+}
+
 /// Parse alias->action mappings from multiple exprs starting with dofalias.
 /// Mutates the input `s` by storing aliases inside.
-fn parse_aliases(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
+fn parse_aliases(
+    exprs: &[&Spanned<Vec<SExpr>>],
+    s: &mut ParserState,
+    env_vars: &EnvVars,
+) -> Result<()> {
     for expr in exprs {
-        handle_standard_defalias(expr, s)?;
-        handle_envcond_defalias(expr, s)?;
+        handle_standard_defalias(&expr.t, s)?;
+        handle_envcond_defalias(expr, s, env_vars)?;
     }
     Ok(())
 }
 
-fn handle_standard_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
+fn handle_standard_defalias(expr: &[SExpr], s: &mut ParserState) -> Result<()> {
     let subexprs = match check_first_expr(expr.iter(), "dofalias") {
         Ok(s) => s,
         Err(_) => return Ok(()),
@@ -968,8 +1320,12 @@ fn handle_standard_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
     read_alias_name_action_pairs(subexprs, s)
 }
 
-fn handle_envcond_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
-    let mut subexprs = match check_first_expr(expr.iter(), "dofaliasenvcond") {
+fn handle_envcond_defalias(
+    exprs: &Spanned<Vec<SExpr>>,
+    s: &mut ParserState,
+    env_vars: &EnvVars,
+) -> Result<()> {
+    let mut subexprs = match check_first_expr(exprs.t.iter(), "dofaliasenvcond") {
         Ok(exprs) => exprs,
         Err(_) => return Ok(()),
     };
@@ -999,21 +1355,45 @@ fn handle_envcond_defalias(expr: &[SExpr], s: &mut ParsedState) -> Result<()> {
                     "Environment variable value must be a string, not a list.\n{conderr}"
                 )
             })?;
-            if !std::env::vars().any(|(name, value)| name == env_var_name && value == env_var_value)
-            {
-                log::info!("Did not find env var ({env_var_name} {env_var_value}), skipping associated aliases");
-                return Ok(());
+            match env_vars {
+                Ok(vars) => {
+                    let values_of_matching_vars: Vec<_> = vars
+                        .iter()
+                        .filter_map(|(k, v)| if k == env_var_name { Some(v) } else { None })
+                        .collect();
+                    if values_of_matching_vars.is_empty() {
+                        let msg = format!("Env var '{env_var_name}' is not set");
+                        s.lsp_hint_inactive_code.push(LspHintInactiveCode {
+                            span: exprs.span.clone(),
+                            reason: msg.clone(),
+                        });
+                        log::info!("{msg}, skipping associated aliases");
+                        return Ok(());
+                    } else if !values_of_matching_vars.iter().any(|&v| v == env_var_value) {
+                        let msg =
+                            format!("Env var '{env_var_name}' is set, but value doesn't match");
+                        s.lsp_hint_inactive_code.push(LspHintInactiveCode {
+                            span: exprs.span.clone(),
+                            reason: msg.clone(),
+                        });
+                        log::info!("{msg}, skipping associated aliases");
+                        return Ok(());
+                    }
+                }
+                Err(err) => {
+                    bail_expr!(expr, "{err}");
+                }
             }
             log::info!("Found env var ({env_var_name} {env_var_value}), using associated aliases");
         }
-        None => bail_expr!(&expr[0], "Missing a list item.\n{conderr}"),
+        None => bail_expr!(&exprs.t[0], "Missing a list item.\n{conderr}"),
     };
     read_alias_name_action_pairs(subexprs, s)
 }
 
 fn read_alias_name_action_pairs<'a>(
     mut exprs: impl Iterator<Item = &'a SExpr>,
-    s: &mut ParsedState,
+    s: &mut ParserState,
 ) -> Result<()> {
     // Read k-v pairs from the configuration
     while let Some(alias_expr) = exprs.next() {
@@ -1038,7 +1418,7 @@ fn read_alias_name_action_pairs<'a>(
 }
 
 /// Parse a `kanata_keyberon::action::Action` from a `SExpr`.
-fn parse_action(expr: &SExpr, s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_action(expr: &SExpr, s: &ParserState) -> Result<&'static KanataAction> {
     expr.atom(s.vars())
         .map(|a| parse_action_atom(&Spanned::new(a.into(), expr.span()), s))
         .unwrap_or_else(|| {
@@ -1054,8 +1434,13 @@ fn parse_action(expr: &SExpr, s: &ParsedState) -> Result<&'static KanataAction> 
         })
 }
 
+/// Returns a single custom action in the proper wrapped type.
+fn custom(ca: CustomAction, a: &Allocations) -> Result<&'static KanataAction> {
+    Ok(a.sref(Action::Custom(a.sref(a.sref_slice(ca)))))
+}
+
 /// Parse a `kanata_keyberon::action::Action` from a string.
-fn parse_action_atom(ac_span: &Spanned<String>, s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_action_atom(ac_span: &Spanned<String>, s: &ParserState) -> Result<&'static KanataAction> {
     let ac = &*ac_span.t;
     if is_list_action(ac) {
         bail_span!(
@@ -1063,125 +1448,75 @@ fn parse_action_atom(ac_span: &Spanned<String>, s: &ParsedState) -> Result<&'sta
             "This is a list action and must be in parentheses: ({ac} ...)"
         );
     }
+
     match ac {
-        "_" => return Ok(s.a.sref(Action::Trans)),
-        "XX" => return Ok(s.a.sref(Action::NoOp)),
-        "lrld" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::LiveReload)),
-            )))
+        "_" | "‗" | "≝" => {
+            if let Some(trans_forbidden_reason) = s.trans_forbidden_reason {
+                bail_span!(ac_span, "{trans_forbidden_reason}");
+            } else {
+                return Ok(s.a.sref(Action::Trans));
+            }
         }
-        "lrld-next" | "lrnx" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::LiveReloadNext)),
-            )))
-        }
-        "lrld-prev" | "lrpv" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::LiveReloadPrev)),
-            )))
-        }
+        "XX" | "✗" | "∅" | "•" => return Ok(s.a.sref(Action::NoOp)),
+        "lrld" => return custom(CustomAction::LiveReload, &s.a),
+        "lrld-next" | "lrnx" => return custom(CustomAction::LiveReloadNext, &s.a),
+        "lrld-prev" | "lrpv" => return custom(CustomAction::LiveReloadPrev, &s.a),
         "sldr" => {
-            return Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
+            return custom(
                 CustomAction::SequenceLeader(
                     s.default_sequence_timeout,
                     s.default_sequence_input_mode,
                 ),
-            )))))
+                &s.a,
+            )
         }
-        "scnl" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::SequenceCancel)),
-            )))
-        }
-        "mlft" | "mouseleft" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::Mouse(Btn::Left))),
-            )))
-        }
-        "mrgt" | "mouseright" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::Mouse(Btn::Right))),
-            )))
-        }
-        "mmid" | "mousemid" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::Mouse(Btn::Mid))),
-            )))
-        }
-        "mfwd" | "mouseforward" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::Mouse(Btn::Forward))),
-            )))
-        }
-        "mbck" | "mousebackward" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::Mouse(Btn::Backward))),
-            )))
-        }
-        "mltp" | "mousetapleft" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::MouseTap(Btn::Left))),
-            )))
-        }
-        "mrtp" | "mousetapright" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::MouseTap(Btn::Right))),
-            )))
-        }
-        "mmtp" | "mousetapmid" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::MouseTap(Btn::Mid))),
-            )))
-        }
-        "mftp" | "mousetapforward" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::MouseTap(Btn::Forward))),
-            )))
-        }
-        "mbtp" | "mousetapbackward" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::MouseTap(Btn::Backward))),
-            )))
-        }
+        "scnl" => return custom(CustomAction::SequenceCancel, &s.a),
+        "mlft" | "mouseleft" => return custom(CustomAction::Mouse(Btn::Left), &s.a),
+        "mrgt" | "mouseright" => return custom(CustomAction::Mouse(Btn::Right), &s.a),
+        "mmid" | "mousemid" => return custom(CustomAction::Mouse(Btn::Mid), &s.a),
+        "mfwd" | "mouseforward" => return custom(CustomAction::Mouse(Btn::Forward), &s.a),
+        "mbck" | "mousebackward" => return custom(CustomAction::Mouse(Btn::Backward), &s.a),
+        "mltp" | "mousetapleft" => return custom(CustomAction::MouseTap(Btn::Left), &s.a),
+        "mrtp" | "mousetapright" => return custom(CustomAction::MouseTap(Btn::Right), &s.a),
+        "mmtp" | "mousetapmid" => return custom(CustomAction::MouseTap(Btn::Mid), &s.a),
+        "mftp" | "mousetapforward" => return custom(CustomAction::MouseTap(Btn::Forward), &s.a),
+        "mbtp" | "mousetapbackward" => return custom(CustomAction::MouseTap(Btn::Backward), &s.a),
         "mwu" | "mousewheelup" => {
-            return Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
+            return custom(
                 CustomAction::MWheelNotch {
                     direction: MWheelDirection::Up,
                 },
-            )))))
+                &s.a,
+            )
         }
         "mwd" | "mousewheeldown" => {
-            return Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
+            return custom(
                 CustomAction::MWheelNotch {
                     direction: MWheelDirection::Down,
                 },
-            )))))
+                &s.a,
+            )
         }
         "mwl" | "mousewheelleft" => {
-            return Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
+            return custom(
                 CustomAction::MWheelNotch {
                     direction: MWheelDirection::Left,
                 },
-            )))))
+                &s.a,
+            )
         }
         "mwr" | "mousewheelright" => {
-            return Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
+            return custom(
                 CustomAction::MWheelNotch {
                     direction: MWheelDirection::Right,
                 },
-            )))))
+                &s.a,
+            )
         }
-        "rpt" | "repeat" | "rpt-key" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::Repeat)),
-            )))
-        }
+        "rpt" | "repeat" | "rpt-key" => return custom(CustomAction::Repeat, &s.a),
         "rpt-any" => return Ok(s.a.sref(Action::Repeat)),
         "dynamic-macro-record-stop" => {
-            return Ok(s.a.sref(Action::Custom(
-                s.a.sref(s.a.sref_slice(CustomAction::DynamicMacroRecordStop(0))),
-            )))
+            return custom(CustomAction::DynamicMacroRecordStop(0), &s.a)
         }
         _ => {}
     };
@@ -1197,7 +1532,13 @@ fn parse_action_atom(ac_span: &Spanned<String>, s: &ParsedState) -> Result<&'sta
             ),
         };
     }
-
+    if let Some(unisym) = ac.strip_prefix('🔣') {
+        // TODO: when unicode accepts multiple chars, change this to feed the whole string, not just the first char
+        return custom(
+            CustomAction::Unicode(unisym.chars().next().expect("1 char")),
+            &s.a,
+        );
+    }
     // Parse a sequence like `C-S-v` or `C-A-del`
     let (mut keys, unparsed_str) = parse_mod_prefix(ac)?;
     keys.push(
@@ -1214,11 +1555,14 @@ fn parse_action_atom(ac_span: &Spanned<String>, s: &ParsedState) -> Result<&'sta
             })?
             .into(),
     );
+    if keys.contains(&KEY_OVERLAP) {
+        bail!("O- is only valid in sequences for lists of keys");
+    }
     Ok(s.a.sref(Action::MultipleKeyCodes(s.a.sref(s.a.sref_vec(keys)))))
 }
 
 /// Parse a `kanata_keyberon::action::Action` from a `SExpr::List`.
-fn parse_action_list(ac: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_action_list(ac: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     if ac.is_empty() {
         return Ok(s.a.sref(Action::NoOp));
     }
@@ -1233,98 +1577,138 @@ fn parse_action_list(ac: &[SExpr], s: &ParsedState) -> Result<&'static KanataAct
         LAYER_SWITCH => parse_layer_base(&ac[1..], s),
         LAYER_TOGGLE | LAYER_WHILE_HELD => parse_layer_toggle(&ac[1..], s),
         TAP_HOLD => parse_tap_hold(&ac[1..], s, HoldTapConfig::Default),
-        TAP_HOLD_PRESS => parse_tap_hold(&ac[1..], s, HoldTapConfig::HoldOnOtherKeyPress),
-        TAP_HOLD_RELEASE => parse_tap_hold(&ac[1..], s, HoldTapConfig::PermissiveHold),
-        TAP_HOLD_PRESS_TIMEOUT => {
+        TAP_HOLD_PRESS | TAP_HOLD_PRESS_A => {
+            parse_tap_hold(&ac[1..], s, HoldTapConfig::HoldOnOtherKeyPress)
+        }
+        TAP_HOLD_RELEASE | TAP_HOLD_RELEASE_A => {
+            parse_tap_hold(&ac[1..], s, HoldTapConfig::PermissiveHold)
+        }
+        TAP_HOLD_PRESS_TIMEOUT | TAP_HOLD_PRESS_TIMEOUT_A => {
             parse_tap_hold_timeout(&ac[1..], s, HoldTapConfig::HoldOnOtherKeyPress)
         }
-        TAP_HOLD_RELEASE_TIMEOUT => {
+        TAP_HOLD_RELEASE_TIMEOUT | TAP_HOLD_RELEASE_TIMEOUT_A => {
             parse_tap_hold_timeout(&ac[1..], s, HoldTapConfig::PermissiveHold)
         }
-        TAP_HOLD_RELEASE_KEYS => {
+        TAP_HOLD_RELEASE_KEYS | TAP_HOLD_RELEASE_KEYS_A => {
             parse_tap_hold_keys(&ac[1..], s, "release", custom_tap_hold_release)
         }
-        TAP_HOLD_EXCEPT_KEYS => parse_tap_hold_keys(&ac[1..], s, "except", custom_tap_hold_except),
+        TAP_HOLD_EXCEPT_KEYS | TAP_HOLD_EXCEPT_KEYS_A => {
+            parse_tap_hold_keys(&ac[1..], s, "except", custom_tap_hold_except)
+        }
         MULTI => parse_multi(&ac[1..], s),
         MACRO => parse_macro(&ac[1..], s, RepeatMacro::No),
-        MACRO_REPEAT => parse_macro(&ac[1..], s, RepeatMacro::Yes),
-        MACRO_RELEASE_CANCEL => parse_macro_release_cancel(&ac[1..], s, RepeatMacro::No),
-        MACRO_REPEAT_RELEASE_CANCEL => parse_macro_release_cancel(&ac[1..], s, RepeatMacro::Yes),
-        UNICODE => parse_unicode(&ac[1..], s),
-        ONE_SHOT | ONE_SHOT_PRESS => parse_one_shot(&ac[1..], s, OneShotEndConfig::EndOnFirstPress),
-        ONE_SHOT_RELEASE => parse_one_shot(&ac[1..], s, OneShotEndConfig::EndOnFirstRelease),
-        ONE_SHOT_PRESS_PCANCEL => {
+        MACRO_REPEAT | MACRO_REPEAT_A => parse_macro(&ac[1..], s, RepeatMacro::Yes),
+        MACRO_RELEASE_CANCEL | MACRO_RELEASE_CANCEL_A => {
+            parse_macro_release_cancel(&ac[1..], s, RepeatMacro::No)
+        }
+        MACRO_REPEAT_RELEASE_CANCEL | MACRO_REPEAT_RELEASE_CANCEL_A => {
+            parse_macro_release_cancel(&ac[1..], s, RepeatMacro::Yes)
+        }
+        UNICODE | SYM => parse_unicode(&ac[1..], s),
+        ONE_SHOT | ONE_SHOT_PRESS | ONE_SHOT_PRESS_A => {
+            parse_one_shot(&ac[1..], s, OneShotEndConfig::EndOnFirstPress)
+        }
+        ONE_SHOT_RELEASE | ONE_SHOT_RELEASE_A => {
+            parse_one_shot(&ac[1..], s, OneShotEndConfig::EndOnFirstRelease)
+        }
+        ONE_SHOT_PRESS_PCANCEL | ONE_SHOT_PRESS_PCANCEL_A => {
             parse_one_shot(&ac[1..], s, OneShotEndConfig::EndOnFirstPressOrRepress)
         }
-        ONE_SHOT_RELEASE_PCANCEL => {
+        ONE_SHOT_RELEASE_PCANCEL | ONE_SHOT_RELEASE_PCANCEL_A => {
             parse_one_shot(&ac[1..], s, OneShotEndConfig::EndOnFirstReleaseOrRepress)
         }
         TAP_DANCE => parse_tap_dance(&ac[1..], s, TapDanceConfig::Lazy),
         TAP_DANCE_EAGER => parse_tap_dance(&ac[1..], s, TapDanceConfig::Eager),
         CHORD => parse_chord(&ac[1..], s),
-        RELEASE_KEY => parse_release_key(&ac[1..], s),
-        RELEASE_LAYER => parse_release_layer(&ac[1..], s),
-        ON_PRESS_FAKEKEY => parse_on_press_fake_key_op(&ac[1..], s),
-        ON_RELEASE_FAKEKEY => parse_on_release_fake_key_op(&ac[1..], s),
-        ON_PRESS_FAKEKEY_DELAY => parse_fake_key_delay(&ac[1..], s),
-        ON_RELEASE_FAKEKEY_DELAY => parse_on_release_fake_key_delay(&ac[1..], s),
+        RELEASE_KEY | RELEASE_KEY_A => parse_release_key(&ac[1..], s),
+        RELEASE_LAYER | RELEASE_LAYER_A => parse_release_layer(&ac[1..], s),
+        ON_PRESS_FAKEKEY | ON_PRESS_FAKEKEY_A => parse_on_press_fake_key_op(&ac[1..], s),
+        ON_RELEASE_FAKEKEY | ON_RELEASE_FAKEKEY_A => parse_on_release_fake_key_op(&ac[1..], s),
+        ON_PRESS_FAKEKEY_DELAY | ON_PRESS_FAKEKEY_DELAY_A => parse_fake_key_delay(&ac[1..], s),
+        ON_RELEASE_FAKEKEY_DELAY | ON_RELEASE_FAKEKEY_DELAY_A => {
+            parse_on_release_fake_key_delay(&ac[1..], s)
+        }
         ON_IDLE_FAKEKEY => parse_on_idle_fakekey(&ac[1..], s),
-        MWHEEL_UP => parse_mwheel(&ac[1..], MWheelDirection::Up, s),
-        MWHEEL_DOWN => parse_mwheel(&ac[1..], MWheelDirection::Down, s),
-        MWHEEL_LEFT => parse_mwheel(&ac[1..], MWheelDirection::Left, s),
-        MWHEEL_RIGHT => parse_mwheel(&ac[1..], MWheelDirection::Right, s),
-        MOVEMOUSE_UP => parse_move_mouse(&ac[1..], MoveDirection::Up, s),
-        MOVEMOUSE_DOWN => parse_move_mouse(&ac[1..], MoveDirection::Down, s),
-        MOVEMOUSE_LEFT => parse_move_mouse(&ac[1..], MoveDirection::Left, s),
-        MOVEMOUSE_RIGHT => parse_move_mouse(&ac[1..], MoveDirection::Right, s),
-        MOVEMOUSE_ACCEL_UP => parse_move_mouse_accel(&ac[1..], MoveDirection::Up, s),
-        MOVEMOUSE_ACCEL_DOWN => parse_move_mouse_accel(&ac[1..], MoveDirection::Down, s),
-        MOVEMOUSE_ACCEL_LEFT => parse_move_mouse_accel(&ac[1..], MoveDirection::Left, s),
-        MOVEMOUSE_ACCEL_RIGHT => parse_move_mouse_accel(&ac[1..], MoveDirection::Right, s),
-        MOVEMOUSE_SPEED => parse_move_mouse_speed(&ac[1..], s),
-        SETMOUSE => parse_set_mouse(&ac[1..], s),
+        ON_PRESS | ON_PRESS_A => parse_on_press(&ac[1..], s),
+        ON_RELEASE | ON_RELEASE_A => parse_on_release(&ac[1..], s),
+        ON_IDLE => parse_on_idle(&ac[1..], s),
+        MWHEEL_UP | MWHEEL_UP_A => parse_mwheel(&ac[1..], MWheelDirection::Up, s),
+        MWHEEL_DOWN | MWHEEL_DOWN_A => parse_mwheel(&ac[1..], MWheelDirection::Down, s),
+        MWHEEL_LEFT | MWHEEL_LEFT_A => parse_mwheel(&ac[1..], MWheelDirection::Left, s),
+        MWHEEL_RIGHT | MWHEEL_RIGHT_A => parse_mwheel(&ac[1..], MWheelDirection::Right, s),
+        MOVEMOUSE_UP | MOVEMOUSE_UP_A => parse_move_mouse(&ac[1..], MoveDirection::Up, s),
+        MOVEMOUSE_DOWN | MOVEMOUSE_DOWN_A => parse_move_mouse(&ac[1..], MoveDirection::Down, s),
+        MOVEMOUSE_LEFT | MOVEMOUSE_LEFT_A => parse_move_mouse(&ac[1..], MoveDirection::Left, s),
+        MOVEMOUSE_RIGHT | MOVEMOUSE_RIGHT_A => parse_move_mouse(&ac[1..], MoveDirection::Right, s),
+        MOVEMOUSE_ACCEL_UP | MOVEMOUSE_ACCEL_UP_A => {
+            parse_move_mouse_accel(&ac[1..], MoveDirection::Up, s)
+        }
+        MOVEMOUSE_ACCEL_DOWN | MOVEMOUSE_ACCEL_DOWN_A => {
+            parse_move_mouse_accel(&ac[1..], MoveDirection::Down, s)
+        }
+        MOVEMOUSE_ACCEL_LEFT | MOVEMOUSE_ACCEL_LEFT_A => {
+            parse_move_mouse_accel(&ac[1..], MoveDirection::Left, s)
+        }
+        MOVEMOUSE_ACCEL_RIGHT | MOVEMOUSE_ACCEL_RIGHT_A => {
+            parse_move_mouse_accel(&ac[1..], MoveDirection::Right, s)
+        }
+        MOVEMOUSE_SPEED | MOVEMOUSE_SPEED_A => parse_move_mouse_speed(&ac[1..], s),
+        SETMOUSE | SETMOUSE_A => parse_set_mouse(&ac[1..], s),
         DYNAMIC_MACRO_RECORD => parse_dynamic_macro_record(&ac[1..], s),
         DYNAMIC_MACRO_PLAY => parse_dynamic_macro_play(&ac[1..], s),
         ARBITRARY_CODE => parse_arbitrary_code(&ac[1..], s),
         CMD => parse_cmd(&ac[1..], s, CmdType::Standard),
         CMD_OUTPUT_KEYS => parse_cmd(&ac[1..], s, CmdType::OutputKeys),
+        PUSH_MESSAGE => parse_push_message(&ac[1..], s),
         FORK => parse_fork(&ac[1..], s),
-        CAPS_WORD => parse_caps_word(&ac[1..], s),
-        CAPS_WORD_CUSTOM => parse_caps_word_custom(&ac[1..], s),
+        CAPS_WORD | CAPS_WORD_A => {
+            parse_caps_word(&ac[1..], CapsWordRepressBehaviour::Overwrite, s)
+        }
+        CAPS_WORD_CUSTOM | CAPS_WORD_CUSTOM_A => {
+            parse_caps_word_custom(&ac[1..], CapsWordRepressBehaviour::Overwrite, s)
+        }
+        CAPS_WORD_TOGGLE | CAPS_WORD_TOGGLE_A => {
+            parse_caps_word(&ac[1..], CapsWordRepressBehaviour::Toggle, s)
+        }
+        CAPS_WORD_CUSTOM_TOGGLE | CAPS_WORD_CUSTOM_TOGGLE_A => {
+            parse_caps_word_custom(&ac[1..], CapsWordRepressBehaviour::Toggle, s)
+        }
         DYNAMIC_MACRO_RECORD_STOP_TRUNCATE => parse_macro_record_stop_truncate(&ac[1..], s),
         SWITCH => parse_switch(&ac[1..], s),
         SEQUENCE => parse_sequence_start(&ac[1..], s),
         UNMOD => parse_unmod(UNMOD, &ac[1..], s),
-        UNSHIFT => parse_unmod(UNSHIFT, &ac[1..], s),
+        UNSHIFT | UNSHIFT_A => parse_unmod(UNSHIFT, &ac[1..], s),
         LIVE_RELOAD_NUM => parse_live_reload_num(&ac[1..], s),
+        LIVE_RELOAD_FILE => parse_live_reload_file(&ac[1..], s),
         _ => unreachable!(),
     }
 }
 
-fn parse_layer_base(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    Ok(s.a.sref(Action::DefaultLayer(
-        layer_idx(ac_params, &s.layer_idxs)? * 2,
-    )))
+fn parse_layer_base(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
+    Ok(s.a.sref(Action::DefaultLayer(layer_idx(
+        ac_params,
+        &s.layer_idxs,
+        s,
+    )?)))
 }
 
-fn parse_layer_toggle(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    Ok(s.a.sref(Action::Layer(layer_idx(ac_params, &s.layer_idxs)? * 2 + 1)))
+fn parse_layer_toggle(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
+    Ok(s.a.sref(Action::Layer(layer_idx(ac_params, &s.layer_idxs, s)?)))
 }
 
-fn layer_idx(ac_params: &[SExpr], layers: &LayerIndexes) -> Result<usize> {
+fn layer_idx(ac_params: &[SExpr], layers: &LayerIndexes, s: &ParserState) -> Result<usize> {
     if ac_params.len() != 1 {
         bail!(
             "Layer actions expect one item: the layer name, found {} items",
             ac_params.len()
         )
     }
-    let layer_name = match &ac_params[0] {
-        SExpr::Atom(ln) => &ln.t,
-        _ => bail_expr!(&ac_params[0], "layer name should be a string not a list",),
-    };
+    let layer_name = ac_params[0]
+        .atom(s.vars())
+        .ok_or_else(|| anyhow_expr!(&ac_params[0], "layer name should be a string not a list",))?;
     match layers.get(layer_name) {
         Some(i) => Ok(*i),
-        None => bail_expr!(
+        None => err_expr!(
             &ac_params[0],
             "layer name is not declared in any doflayer: {layer_name}"
         ),
@@ -1333,7 +1717,7 @@ fn layer_idx(ac_params: &[SExpr], layers: &LayerIndexes) -> Result<usize> {
 
 fn parse_tap_hold(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     config: HoldTapConfig<'static>,
 ) -> Result<&'static KanataAction> {
     if ac_params.len() != 4 {
@@ -1363,7 +1747,7 @@ Params in order:
 
 fn parse_tap_hold_timeout(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     config: HoldTapConfig<'static>,
 ) -> Result<&'static KanataAction> {
     if ac_params.len() != 5 {
@@ -1394,7 +1778,7 @@ Params in order:
 
 fn parse_tap_hold_keys(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     custom_name: &str,
     custom_func: TapHoldCustomFunc,
 ) -> Result<&'static KanataAction> {
@@ -1425,7 +1809,7 @@ Params in order:
     }))))
 }
 
-fn parse_u8_with_range(expr: &SExpr, s: &ParsedState, label: &str, min: u8, max: u8) -> Result<u8> {
+fn parse_u8_with_range(expr: &SExpr, s: &ParserState, label: &str, min: u8, max: u8) -> Result<u8> {
     expr.atom(s.vars())
         .map(str::parse::<u8>)
         .and_then(|u| u.ok())
@@ -1440,14 +1824,14 @@ fn parse_u8_with_range(expr: &SExpr, s: &ParsedState, label: &str, min: u8, max:
         .ok_or_else(|| anyhow_expr!(expr, "{label} must be {min}-{max}"))
 }
 
-fn parse_u16(expr: &SExpr, s: &ParsedState, label: &str) -> Result<u16> {
+fn parse_u16(expr: &SExpr, s: &ParserState, label: &str) -> Result<u16> {
     expr.atom(s.vars())
         .map(str::parse::<u16>)
         .and_then(|u| u.ok())
         .ok_or_else(|| anyhow_expr!(expr, "{label} must be 0-65535"))
 }
 
-fn parse_non_zero_u16(expr: &SExpr, s: &ParsedState, label: &str) -> Result<u16> {
+fn parse_non_zero_u16(expr: &SExpr, s: &ParserState, label: &str) -> Result<u16> {
     expr.atom(s.vars())
         .map(str::parse::<u16>)
         .and_then(|u| match u {
@@ -1457,7 +1841,7 @@ fn parse_non_zero_u16(expr: &SExpr, s: &ParsedState, label: &str) -> Result<u16>
         .ok_or_else(|| anyhow_expr!(expr, "{label} must be 1-65535"))
 }
 
-fn parse_key_list(expr: &SExpr, s: &ParsedState, label: &str) -> Result<Vec<OsCode>> {
+fn parse_key_list(expr: &SExpr, s: &ParserState, label: &str) -> Result<Vec<OsCode>> {
     expr.list(s.vars())
         .map(|keys| {
             keys.iter().try_fold(vec![], |mut keys, key| {
@@ -1477,7 +1861,7 @@ fn parse_key_list(expr: &SExpr, s: &ParsedState, label: &str) -> Result<Vec<OsCo
         .ok_or_else(|| anyhow_expr!(expr, "{label} must be a list of keys"))?
 }
 
-fn parse_multi(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_multi(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     if ac_params.is_empty() {
         bail!("multi expects at least one item after it")
     }
@@ -1541,7 +1925,7 @@ enum RepeatMacro {
 
 fn parse_macro(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     repeat: RepeatMacro,
 ) -> Result<&'static KanataAction> {
     if ac_params.is_empty() {
@@ -1553,6 +1937,14 @@ fn parse_macro(
         let mut events;
         (events, params_remainder) = parse_macro_item(params_remainder, s)?;
         all_events.append(&mut events);
+    }
+    if all_events.iter().any(|e| match e {
+        SequenceEvent::Tap(kc) | SequenceEvent::Press(kc) | SequenceEvent::Release(kc) => {
+            *kc == KEY_OVERLAP
+        }
+        _ => false,
+    }) {
+        bail!("macro contains O- which is only valid within dofseq")
     }
     all_events.push(SequenceEvent::Complete);
     all_events.shrink_to_fit();
@@ -1568,7 +1960,7 @@ fn parse_macro(
 
 fn parse_macro_release_cancel(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     repeat: RepeatMacro,
 ) -> Result<&'static KanataAction> {
     let macro_action = parse_macro(ac_params, s, repeat)?;
@@ -1587,7 +1979,7 @@ enum MacroNumberParseMode {
 #[allow(clippy::type_complexity)] // return type is not pub
 fn parse_macro_item<'a>(
     acs: &'a [SExpr],
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Result<(
     Vec<SequenceEvent<'static, &'static &'static [&'static CustomAction]>>,
     &'a [SExpr],
@@ -1598,7 +1990,7 @@ fn parse_macro_item<'a>(
 #[allow(clippy::type_complexity)] // return type is not pub
 fn parse_macro_item_impl<'a>(
     acs: &'a [SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     num_parse_mode: MacroNumberParseMode,
 ) -> Result<(
     Vec<SequenceEvent<'static, &'static &'static [&'static CustomAction]>>,
@@ -1706,7 +2098,7 @@ fn parse_macro_item_impl<'a>(
 /// text after any parsed modifier prefixes.
 fn parse_mods_held_for_submacro<'a>(
     held_mods: &'a SExpr,
-    s: &'a ParsedState,
+    s: &'a ParserState,
 ) -> Result<(Vec<KeyCode>, &'a str)> {
     let mods = held_mods
         .atom(s.vars())
@@ -1718,63 +2110,75 @@ fn parse_mods_held_for_submacro<'a>(
     Ok((mod_keys, unparsed_str))
 }
 
+static KEYMODI: &[(&str, KeyCode)] = &[
+    ("S-", KeyCode::LShift),
+    ("‹⇧", KeyCode::LShift),
+    ("⇧›", KeyCode::RShift),
+    ("RS-", KeyCode::RShift),
+    ("C-", KeyCode::LCtrl),
+    ("‹⎈", KeyCode::LCtrl),
+    ("‹⌃", KeyCode::LCtrl),
+    ("⎈›", KeyCode::RCtrl),
+    ("⌃›", KeyCode::RCtrl),
+    ("RC-", KeyCode::RCtrl),
+    ("M-", KeyCode::LGui),
+    ("‹◆", KeyCode::LGui),
+    ("‹⌘", KeyCode::LGui),
+    ("‹❖", KeyCode::LGui),
+    ("◆›", KeyCode::RGui),
+    ("⌘›", KeyCode::RGui),
+    ("❖›", KeyCode::RGui),
+    ("RM-", KeyCode::RGui),
+    ("‹⎇", KeyCode::LAlt),
+    ("A-", KeyCode::LAlt),
+    ("‹⌥", KeyCode::LAlt),
+    ("AG-", KeyCode::RAlt),
+    ("RA-", KeyCode::RAlt),
+    ("⎇›", KeyCode::RAlt),
+    ("⌥›", KeyCode::RAlt),
+    ("⎈", KeyCode::LCtrl), // Shorter indicators should be at the end to only get matched after
+    // indicators with sides have had a chance
+    ("⌥", KeyCode::LAlt),
+    ("⎇", KeyCode::LAlt),
+    ("◆", KeyCode::LGui),
+    ("⌘", KeyCode::LGui),
+    ("❖", KeyCode::LGui),
+    ("O-", KEY_OVERLAP),
+];
+
 /// Parses mod keys like `C-S-`. Returns the `KeyCode`s for the modifiers parsed and the unparsed
 /// text after any parsed modifier prefixes.
 pub fn parse_mod_prefix(mods: &str) -> Result<(Vec<KeyCode>, &str)> {
     let mut key_stack = Vec::new();
     let mut rem = mods;
     loop {
-        if let Some(rest) = rem.strip_prefix("C-") {
-            if key_stack.contains(&KeyCode::LCtrl) {
-                bail!("Redundant \"C-\" in {mods:?}");
+        let mut found_none = true;
+        for (key_s, key_code) in KEYMODI {
+            if let Some(rest) = rem.strip_prefix(key_s) {
+                if key_stack.contains(key_code) {
+                    bail!("Redundant \"{key_code:?}\" in {mods:?}");
+                }
+                key_stack.push(*key_code);
+                rem = rest;
+                found_none = false;
             }
-            key_stack.push(KeyCode::LCtrl);
-            rem = rest;
-        } else if let Some(rest) = rem.strip_prefix("S-") {
-            if key_stack.contains(&KeyCode::LShift) {
-                bail!("Redundant \"S-\" in {mods:?}");
-            }
-            key_stack.push(KeyCode::LShift);
-            rem = rest;
-        } else if let Some(rest) = rem.strip_prefix("AG-") {
-            if key_stack.contains(&KeyCode::RAlt) {
-                bail!("Redundant \"AltGr\" in {mods:?}");
-            }
-            key_stack.push(KeyCode::RAlt);
-            rem = rest;
-        } else if let Some(rest) = rem.strip_prefix("RA-") {
-            if key_stack.contains(&KeyCode::RAlt) {
-                bail!("Redundant \"AltGr\" in {mods:?}");
-            }
-            key_stack.push(KeyCode::RAlt);
-            rem = rest;
-        } else if let Some(rest) = rem.strip_prefix("A-") {
-            if key_stack.contains(&KeyCode::LAlt) {
-                bail!("Redundant \"A-\" in {mods:?}");
-            }
-            key_stack.push(KeyCode::LAlt);
-            rem = rest;
-        } else if let Some(rest) = rem.strip_prefix("M-") {
-            if key_stack.contains(&KeyCode::LGui) {
-                bail!("Redundant \"M-\" in {mods:?}");
-            }
-            key_stack.push(KeyCode::LGui);
-            rem = rest;
-        } else {
+        }
+        if found_none {
             break;
         }
     }
     Ok((key_stack, rem))
 }
 
-fn parse_unicode(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    const ERR_STR: &str = "unicode expects exactly one unicode character as an argument";
+fn parse_unicode(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
+    const ERR_STR: &str = "unicode expects exactly one (not combos looking like one) unicode character as an argument";
     if ac_params.len() != 1 {
         bail!(ERR_STR)
     }
     ac_params[0]
         .atom(s.vars())
         .map(|a| {
+            let a = a.trim_atom_quotes();
             if a.chars().count() != 1 {
                 bail_expr!(&ac_params[0], "{ERR_STR}")
             }
@@ -1792,12 +2196,12 @@ enum CmdType {
 
 fn parse_cmd(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     cmd_type: CmdType,
 ) -> Result<&'static KanataAction> {
     const ERR_STR: &str = "cmd expects at least one string";
     if !s.is_cmd_enabled {
-        bail!("cmd is not enabled, but cmd is in the configuration");
+        bail!("cmd is not enabled for this kanata executable (did you use 'cmd_allowed' variants?), but is set in the configuration");
     }
     let mut cmd = vec![];
     collect_strings(ac_params, &mut cmd, s);
@@ -1814,10 +2218,10 @@ fn parse_cmd(
 /// Recurse through all levels of list nesting and collect into a flat list of strings.
 /// Recursion is DFS, which matches left-to-right reading of the strings as they appear,
 /// if everything was on a single line.
-fn collect_strings(params: &[SExpr], strings: &mut Vec<String>, s: &ParsedState) {
+fn collect_strings(params: &[SExpr], strings: &mut Vec<String>, s: &ParserState) {
     for param in params {
         if let Some(a) = param.atom(s.vars()) {
-            strings.push(a.trim_matches('"').to_owned());
+            strings.push(a.trim_atom_quotes().to_owned());
         } else {
             // unwrap: this must be a list, since it's not an atom.
             let l = param.list(s.vars()).unwrap();
@@ -1831,16 +2235,48 @@ fn test_collect_strings() {
     let params = r#"(gah (squish "squash" (splish splosh) "bah mah") dah)"#;
     let params = sexpr::parse(params, "noexist").unwrap();
     let mut strings = vec![];
-    collect_strings(&params[0].t, &mut strings, &ParsedState::default());
+    collect_strings(&params[0].t, &mut strings, &ParserState::default());
     assert_eq!(
         &strings,
         &["gah", "squish", "squash", "splish", "splosh", "bah mah", "dah"]
     );
 }
 
+fn parse_push_message(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
+    if ac_params.is_empty() {
+        bail!(
+             "{PUSH_MESSAGE} expects at least one item, an item can be a list or an atom, found 0, none"
+        );
+    }
+    let message = to_simple_expr(ac_params, s);
+    custom(CustomAction::PushMessage(message), &s.a)
+}
+
+fn to_simple_expr(params: &[SExpr], s: &ParserState) -> Vec<SimpleSExpr> {
+    let mut result: Vec<SimpleSExpr> = Vec::new();
+    for param in params {
+        if let Some(a) = param.atom(s.vars()) {
+            result.push(SimpleSExpr::Atom(a.trim_atom_quotes().to_owned()));
+        } else {
+            // unwrap: this must be a list, since it's not an atom.
+            let sexps = param.list(s.vars()).unwrap();
+            let value = to_simple_expr(sexps, s);
+            let list = SimpleSExpr::List(value);
+            result.push(list);
+        }
+    }
+    result
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SimpleSExpr {
+    Atom(String),
+    List(Vec<SimpleSExpr>),
+}
+
 fn parse_one_shot(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     end_config: OneShotEndConfig,
 ) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "one-shot expects a timeout followed by a key or action";
@@ -1866,7 +2302,7 @@ fn parse_one_shot(
 
 fn parse_tap_dance(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
     config: TapDanceConfig,
 ) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "tap-dance expects a timeout (number) followed by a list of actions";
@@ -1894,7 +2330,7 @@ fn parse_tap_dance(
     }))))
 }
 
-fn parse_chord(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_chord(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "Action chord expects a chords group name followed by an identifier";
     if ac_params.len() != 2 {
         bail!(ERR_MSG);
@@ -1911,7 +2347,7 @@ fn parse_chord(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAc
         .atom(s.vars())
         .map(|s| match group.keys.iter().position(|e| e == s) {
             Some(i) => Ok(i),
-            None => bail_expr!(
+            None => err_expr!(
                 &ac_params[1],
                 r#"Identifier "{}" is not used in chord group "{}"."#,
                 &s,
@@ -1919,7 +2355,7 @@ fn parse_chord(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAc
             ),
         })
         .ok_or_else(|| anyhow_expr!(&ac_params[0], "{ERR_MSG}"))??;
-    let chord_keys = 1 << chord_key_index;
+    let chord_keys: u128 = 1 << chord_key_index;
 
     // We don't yet know at this point what the entire chords group will look like nor at which
     // coords this action will end up. So instead we store a dummy action which will be properly
@@ -1931,7 +2367,7 @@ fn parse_chord(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAc
     }))))
 }
 
-fn parse_release_key(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_release_key(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "release-key expects exactly one keycode (e.g. lalt)";
     if ac_params.len() != 1 {
         bail!("{ERR_MSG}: found {} items", ac_params.len());
@@ -1941,32 +2377,31 @@ fn parse_release_key(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static Ka
         Action::KeyCode(kc) => {
             Ok(s.a.sref(Action::ReleaseState(ReleasableState::KeyCode(*kc))))
         }
-        _ => bail_expr!(&ac_params[0], "{}", ERR_MSG),
+        _ => err_expr!(&ac_params[0], "{}", ERR_MSG),
     }
 }
 
-fn parse_release_layer(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    Ok(s.a.sref(Action::ReleaseState(ReleasableState::Layer(
-        layer_idx(ac_params, &s.layer_idxs)? * 2 + 1,
-    ))))
+fn parse_release_layer(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
+    Ok(s.a
+        .sref(Action::ReleaseState(ReleasableState::Layer(layer_idx(
+            ac_params,
+            &s.layer_idxs,
+            s,
+        )?))))
 }
 
-fn parse_defsrc_layer(
-    dofsrc: &[SExpr],
-    mapping_order: &[usize],
-    s: &ParsedState,
-) -> [KanataAction; KEYS_IN_ROW] {
-    let mut layer = [KanataAction::Trans; KEYS_IN_ROW];
+fn create_defsrc_layer() -> [KanataAction; KEYS_IN_ROW] {
+    let mut layer = [KanataAction::NoOp; KEYS_IN_ROW];
 
-    // These can be default (empty) since the dofsrc layer definitely won't use it.
-    for (i, ac) in dofsrc.iter().skip(1).enumerate() {
-        let ac = parse_action(ac, s).expect("prechecked valid key names");
-        layer[mapping_order[i]] = *ac;
+    for (i, ac) in layer.iter_mut().enumerate() {
+        *ac = OsCode::from_u16(i as u16)
+            .map(|osc| Action::KeyCode(osc.into()))
+            .unwrap_or(Action::NoOp);
     }
     layer
 }
 
-fn parse_chord_groups(exprs: &[&Spanned<Vec<SExpr>>], s: &mut ParsedState) -> Result<()> {
+fn parse_chord_groups(exprs: &[&Spanned<Vec<SExpr>>], s: &mut ParserState) -> Result<()> {
     const MSG: &str = "Incorrect number of elements found in dofchords.\nThere should be the group name, followed by timeout, followed by keys-action pairs";
     for expr in exprs {
         let mut subexprs = check_first_expr(expr.t.iter(), "dofchords")?;
@@ -2014,7 +2449,7 @@ fn parse_chord_groups(exprs: &[&Spanned<Vec<SExpr>>], s: &mut ParsedState) -> Re
                     })
                 })
                 .ok_or_else(|| anyhow_expr!(keys_expr, "Chord must be a list/set of keys"))?;
-            let mask = keys.try_fold(0, |mask, key| {
+            let mask: u128 = keys.try_fold(0, |mask, key| {
                 let key = key?;
                 let index = match group.keys.iter().position(|k| k == key) {
                     Some(i) => i,
@@ -2040,7 +2475,7 @@ fn parse_chord_groups(exprs: &[&Spanned<Vec<SExpr>>], s: &mut ParsedState) -> Re
     Ok(())
 }
 
-fn resolve_chord_groups(layers: &mut KanataLayers, s: &ParsedState) -> Result<()> {
+fn resolve_chord_groups(layers: &mut IntermediateLayers, s: &ParserState) -> Result<()> {
     let mut chord_groups = s.chord_groups.values().cloned().collect::<Vec<_>>();
     chord_groups.sort_by_key(|group| group.id);
 
@@ -2137,7 +2572,7 @@ fn find_chords_coords(chord_groups: &mut [ChordGroup], coord: (u8, u16), action:
 fn fill_chords(
     chord_groups: &[&'static ChordsGroup<&&[&CustomAction]>],
     action: &KanataAction,
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Option<KanataAction> {
     match action {
         Action::Chords(ChordsGroup { coords, .. }) => {
@@ -2246,7 +2681,7 @@ fn fill_chords(
     }
 }
 
-fn parse_fake_keys(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
+fn parse_fake_keys(exprs: &[&Vec<SExpr>], s: &mut ParserState) -> Result<()> {
     for expr in exprs {
         let mut subexprs = check_first_expr(expr.iter(), "doffakekeys")?;
         // Read k-v pairs from the configuration
@@ -2263,9 +2698,9 @@ fn parse_fake_keys(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
                 ),
             };
             let action = parse_action(action, s)?;
-            let idx = s.fake_keys.len();
+            let idx = s.virtual_keys.len();
             log::trace!("inserting {key_name}->{idx}:{action:?}");
-            if s.fake_keys
+            if s.virtual_keys
                 .insert(key_name.clone(), (idx, action))
                 .is_some()
             {
@@ -2273,115 +2708,52 @@ fn parse_fake_keys(exprs: &[&Vec<SExpr>], s: &mut ParsedState) -> Result<()> {
             }
         }
     }
-    if s.fake_keys.len() > KEYS_IN_ROW {
+    if s.virtual_keys.len() > KEYS_IN_ROW {
         bail!(
             "Maximum number of fake keys is {KEYS_IN_ROW}, found {}",
-            s.fake_keys.len()
+            s.virtual_keys.len()
         );
     }
     Ok(())
 }
 
-fn parse_on_press_fake_key_op(
-    ac_params: &[SExpr],
-    s: &ParsedState,
-) -> Result<&'static KanataAction> {
-    let (coord, action) = parse_fake_key_op_coord_action(ac_params, s, ON_PRESS_FAKEKEY)?;
-    Ok(s.a.sref(Action::Custom(
-        s.a.sref(s.a.sref_slice(CustomAction::FakeKey { coord, action })),
-    )))
-}
-
-fn parse_on_release_fake_key_op(
-    ac_params: &[SExpr],
-    s: &ParsedState,
-) -> Result<&'static KanataAction> {
-    let (coord, action) = parse_fake_key_op_coord_action(ac_params, s, ON_RELEASE_FAKEKEY)?;
-    Ok(s.a.sref(Action::Custom(s.a.sref(
-        s.a.sref_slice(CustomAction::FakeKeyOnRelease { coord, action }),
-    ))))
-}
-
-fn parse_fake_key_op_coord_action(
-    ac_params: &[SExpr],
-    s: &ParsedState,
-    ac_name: &str,
-) -> Result<(Coord, FakeKeyAction)> {
-    const ERR_MSG: &str = "expects two parameters: <fake key name> <(tap|press|release|toggle)>";
-    if ac_params.len() != 2 {
-        bail!("{ac_name} {ERR_MSG}");
+fn parse_virtual_keys(exprs: &[&Vec<SExpr>], s: &mut ParserState) -> Result<()> {
+    for expr in exprs {
+        let mut subexprs = check_first_expr(expr.iter(), "defvirtualkeys")?;
+        // Read k-v pairs from the configuration
+        while let Some(key_name_expr) = subexprs.next() {
+            let key_name = key_name_expr
+                .atom(s.vars())
+                .ok_or_else(|| anyhow_expr!(key_name_expr, "Virtual key name must not be a list."))?
+                .to_owned();
+            let action = match subexprs.next() {
+                Some(v) => v,
+                None => bail_expr!(
+                    key_name_expr,
+                    "Virtual key name has no action - you must add an action."
+                ),
+            };
+            let action = parse_action(action, s)?;
+            let idx = s.virtual_keys.len();
+            log::trace!("inserting {key_name}->{idx}:{action:?}");
+            if s.virtual_keys
+                .insert(key_name.clone(), (idx, action))
+                .is_some()
+            {
+                bail_expr!(key_name_expr, "Duplicate virtual key: {}", key_name);
+            }
+        }
     }
-    let y = match s.fake_keys.get(ac_params[0].atom(s.vars()).ok_or_else(|| {
-        anyhow_expr!(
-            &ac_params[0],
-            "{ac_name} {ERR_MSG}\nInvalid first parameter: a fake key name cannot be a list",
-        )
-    })?) {
-        Some((y, _)) => *y as u16, // cast should be safe; checked in `parse_fake_keys`
-        None => bail_expr!(
-            &ac_params[0],
-            "{ac_name} {ERR_MSG}\nInvalid first parameter: unknown fake key name {:?}",
-            &ac_params[0]
-        ),
-    };
-    let action = ac_params[1]
-        .atom(s.vars())
-        .and_then(|a| match a {
-            "tap" => Some(FakeKeyAction::Tap),
-            "press" => Some(FakeKeyAction::Press),
-            "release" => Some(FakeKeyAction::Release),
-            "toggle" => Some(FakeKeyAction::Toggle),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            anyhow_expr!(
-                &ac_params[1],
-                "{ERR_MSG}\nInvalid second parameter, it must be one of: tap, press, release",
-            )
-        })?;
-    let (x, y) = get_fake_key_coords(y);
-    Ok((Coord { x, y }, action))
+    if s.virtual_keys.len() > KEYS_IN_ROW {
+        bail!(
+            "Maximum number of virtual keys is {KEYS_IN_ROW}, found {}",
+            s.virtual_keys.len()
+        );
+    }
+    Ok(())
 }
 
-pub const NORMAL_KEY_ROW: u8 = 0;
-pub const FAKE_KEY_ROW: u8 = 1;
-
-fn get_fake_key_coords<T: Into<usize>>(y: T) -> (u8, u16) {
-    let y: usize = y.into();
-    (FAKE_KEY_ROW, y as u16)
-}
-
-fn parse_fake_key_delay(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    parse_delay(ac_params, false, s)
-}
-
-fn parse_on_release_fake_key_delay(
-    ac_params: &[SExpr],
-    s: &ParsedState,
-) -> Result<&'static KanataAction> {
-    parse_delay(ac_params, true, s)
-}
-
-fn parse_delay(
-    ac_params: &[SExpr],
-    is_release: bool,
-    s: &ParsedState,
-) -> Result<&'static KanataAction> {
-    const ERR_MSG: &str = "fakekey-delay expects a single number (ms, 0-65535)";
-    log::warn!("The configuration contains a fakekey-delay action. This is broken for many use cases. It is recommended to use macro instead.");
-    let delay = ac_params[0]
-        .atom(s.vars())
-        .map(str::parse::<u16>)
-        .ok_or_else(|| anyhow!("{ERR_MSG}"))?
-        .map_err(|e| anyhow!("{ERR_MSG}: {e}"))?;
-    Ok(s.a
-        .sref(Action::Custom(s.a.sref(s.a.sref_slice(match is_release {
-            false => CustomAction::Delay(delay),
-            true => CustomAction::DelayOnRelease(delay),
-        })))))
-}
-
-fn parse_distance(expr: &SExpr, s: &ParsedState, label: &str) -> Result<u16> {
+fn parse_distance(expr: &SExpr, s: &ParserState, label: &str) -> Result<u16> {
     expr.atom(s.vars())
         .map(str::parse::<u16>)
         .and_then(|d| match d {
@@ -2394,7 +2766,7 @@ fn parse_distance(expr: &SExpr, s: &ParsedState, label: &str) -> Result<u16> {
 fn parse_mwheel(
     ac_params: &[SExpr],
     direction: MWheelDirection,
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "mwheel expects 2 parameters: <interval (ms)> <distance>";
     if ac_params.len() != 2 {
@@ -2414,7 +2786,7 @@ fn parse_mwheel(
 fn parse_move_mouse(
     ac_params: &[SExpr],
     direction: MoveDirection,
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "movemouse expects 2 parameters: <interval (ms)> <distance (px)>";
     if ac_params.len() != 2 {
@@ -2434,7 +2806,7 @@ fn parse_move_mouse(
 fn parse_move_mouse_accel(
     ac_params: &[SExpr],
     direction: MoveDirection,
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Result<&'static KanataAction> {
     if ac_params.len() != 4 {
         bail!("movemouse-accel expects four parameters, found {}\n<interval (ms)> <acceleration time (ms)> <min_distance> <max_distance>", ac_params.len());
@@ -2457,7 +2829,7 @@ fn parse_move_mouse_accel(
     )))))
 }
 
-fn parse_move_mouse_speed(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_move_mouse_speed(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     if ac_params.len() != 1 {
         bail!(
             "movemouse-speed expects one parameter, found {}\n<speed scaling % (1-65535)>",
@@ -2470,7 +2842,7 @@ fn parse_move_mouse_speed(ac_params: &[SExpr], s: &ParsedState) -> Result<&'stat
     )))
 }
 
-fn parse_set_mouse(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_set_mouse(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     if ac_params.len() != 2 {
         bail!(
             "movemouse-accel expects two parameters, found {}: <x> <y>",
@@ -2486,7 +2858,7 @@ fn parse_set_mouse(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static Kana
 
 fn parse_dynamic_macro_record(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "dynamic-macro-record expects 1 parameter: <macro ID (0-65535)>";
     if ac_params.len() != 1 {
@@ -2498,7 +2870,7 @@ fn parse_dynamic_macro_record(
     )))
 }
 
-fn parse_dynamic_macro_play(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_dynamic_macro_play(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "dynamic-macro-play expects 1 parameter: <macro ID (number 0-65535)>";
     if ac_params.len() != 1 {
         bail!("{ERR_MSG}, found {}", ac_params.len());
@@ -2509,11 +2881,10 @@ fn parse_dynamic_macro_play(ac_params: &[SExpr], s: &ParsedState) -> Result<&'st
     )))
 }
 
-fn parse_live_reload_num(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    const ERR_MSG: &str =
-        "{LIVE_RELOAD_NUM} expects 1 parameter: <config argument position (1-65535)>";
+fn parse_live_reload_num(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
+    const ERR_MSG: &str = "expects 1 parameter: <config argument position (1-65535)>";
     if ac_params.len() != 1 {
-        bail!("{ERR_MSG}, found {}", ac_params.len());
+        bail!("{LIVE_RELOAD_NUM} {ERR_MSG}, found {}", ac_params.len());
     }
     let num = parse_non_zero_u16(&ac_params[0], s, "config argument position")?;
     Ok(s.a.sref(Action::Custom(
@@ -2523,107 +2894,273 @@ fn parse_live_reload_num(ac_params: &[SExpr], s: &ParsedState) -> Result<&'stati
     )))
 }
 
-fn parse_layers(s: &mut ParsedState) -> Result<Box<KanataLayers>> {
-    // There are two copies/versions of each layer. One is used as the target of "layer-switch" and
-    // the other is the target of "layer-while-held".
-    let mut layers_cfg = new_layers();
+fn parse_live_reload_file(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
+    const ERR_MSG: &str = "expects 1 parameter: <config argument (exact path)>";
+    if ac_params.len() != 1 {
+        bail!("{LIVE_RELOAD_FILE} {ERR_MSG}, found {}", ac_params.len());
+    }
+    let expr = &ac_params[0];
+    let spanned_filepath = match expr {
+        SExpr::Atom(filepath) => filepath,
+        SExpr::List(_) => {
+            bail_expr!(&expr, "Filepath cannot be a list")
+        }
+    };
+    let lrld_file_path = spanned_filepath.t.trim_atom_quotes();
+    Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
+        CustomAction::LiveReloadFile(lrld_file_path.to_string()),
+    )))))
+}
+
+fn parse_layers(
+    s: &ParserState,
+    mapped_keys: &mut MappedKeys,
+    dofcfg: &CfgOptions,
+) -> Result<IntermediateLayers> {
+    let mut layers_cfg = new_layers(s.layer_exprs.len());
+    if s.layer_exprs.len() > MAX_LAYERS {
+        bail!("Maximum number of layers ({}) exceeded.", MAX_LAYERS);
+    }
+    let mut dofsrc_layer = s.dofsrc_layer;
     for (layer_level, layer) in s.layer_exprs.iter().enumerate() {
-        // The skip is done to skip the the `doflayer` and layer name tokens.
-        for (i, ac) in layer.iter().skip(2).enumerate() {
-            // Parse actions in the layer and place them appropriately.
-            let ac = parse_action(ac, s)?;
-            layers_cfg[layer_level * 2][0][s.mapping_order[i]] = *ac;
-            layers_cfg[layer_level * 2 + 1][0][s.mapping_order[i]] = *ac;
-        }
-        for (i, (layer_action, dofsrc_action)) in layers_cfg[layer_level * 2][0]
-            .iter_mut()
-            .zip(s.dofsrc_layer)
-            .enumerate()
-        {
-            // Set transparent actions in the "layer-switch" version of the layer according to
-            // dofsrc action.
-            if *layer_action == Action::Trans {
-                *layer_action = dofsrc_action;
+        match layer {
+            // The skip is done to skip the the `doflayer` and layer name tokens.
+            LayerExprs::DefsrcMapping(layer) => {
+                // Parse actions in the layer and place them appropriately according
+                // to dofsrc mapping order.
+                for (i, ac) in layer.iter().skip(2).enumerate() {
+                    let ac = parse_action(ac, s)?;
+                    layers_cfg[layer_level][0][s.mapping_order[i]] = *ac;
+                }
             }
-            // If there is no corresponding action in dofsrc, default to the OsCode at the
-            // position. This is done so that `process-unmapped-keys` works correctly.
-            if *layer_action == Action::Trans {
-                *layer_action = OsCode::from_u16(i as u16)
-                    .and_then(|osc| match KeyCode::from(osc) {
-                        KeyCode::No => None,
-                        kc => Some(Action::KeyCode(kc)),
-                    })
-                    .unwrap_or(Action::Trans);
+            LayerExprs::CustomMapping(layer) => {
+                // Parse actions as input output pairs
+                let mut pairs = layer[2..].chunks_exact(2);
+                let mut layer_mapped_keys = HashSet::default();
+                let mut dofsrc_anykey_used = false;
+                let mut unmapped_anykey_used = false;
+                let mut both_anykey_used = false;
+                for triplet in pairs.by_ref() {
+                    let input = &triplet[0];
+                    let action = &triplet[1];
+
+                    // TODO: remove me some time after April 2024 to reduce code bloat somewhat.
+                    const MAPSTRS: &[&str] = &[":", "->", ">>", "maps-to", "→", "🞂"];
+                    const MAPSTR_ERR: &str = "Seems you are using a retired configuration style.\n\
+                            You should remove all mapping strings from doflayermap;\n\
+                            doflayermap now uses pairs instead of triples.";
+                    if input.atom(s.vars()).is_some_and(|x| MAPSTRS.contains(&x)) {
+                        bail_expr!(input, "{MAPSTR_ERR}");
+                    }
+                    if action.atom(s.vars()).is_some_and(|x| MAPSTRS.contains(&x)) {
+                        bail_expr!(action, "{MAPSTR_ERR}");
+                    }
+
+                    let action = parse_action(action, s)?;
+                    if input.atom(s.vars()).is_some_and(|x| x == "_") {
+                        if dofsrc_anykey_used {
+                            bail_expr!(input, "must have only one use of _ within a layer")
+                        }
+                        if both_anykey_used {
+                            bail_expr!(input, "must either use _ or ___ within a layer, not both")
+                        }
+                        for i in 0..s.mapping_order.len() {
+                            if layers_cfg[layer_level][0][s.mapping_order[i]] == Action::Trans {
+                                layers_cfg[layer_level][0][s.mapping_order[i]] = *action;
+                            }
+                        }
+                        dofsrc_anykey_used = true;
+                    } else if input.atom(s.vars()).is_some_and(|x| x == "__") {
+                        if unmapped_anykey_used {
+                            bail_expr!(input, "must have only one use of __ within a layer")
+                        }
+                        if !dofcfg.process_unmapped_keys {
+                            bail_expr!(
+                                input,
+                                "must set process-unmapped-keys to yes to use __ to map unmapped keys"
+                            );
+                        }
+                        if both_anykey_used {
+                            bail_expr!(input, "must either use __ or ___ within a layer, not both")
+                        }
+                        for i in 0..layers_cfg[0][0].len() {
+                            if layers_cfg[layer_level][0][i] == Action::Trans
+                                && !s.mapping_order.contains(&i)
+                            {
+                                layers_cfg[layer_level][0][i] = *action;
+                            }
+                        }
+                        unmapped_anykey_used = true;
+                    } else if input.atom(s.vars()).is_some_and(|x| x == "___") {
+                        if both_anykey_used {
+                            bail_expr!(input, "must have only one use of ___ within a layer")
+                        }
+                        if dofsrc_anykey_used {
+                            bail_expr!(input, "must either use _ or ___ within a layer, not both")
+                        }
+                        if unmapped_anykey_used {
+                            bail_expr!(input, "must either use __ or ___ within a layer, not both")
+                        }
+                        if !dofcfg.process_unmapped_keys {
+                            bail_expr!(
+                                input,
+                                "must set process-unmapped-keys to yes to use ___ to also map unmapped keys"
+                            );
+                        }
+                        for i in 0..layers_cfg[0][0].len() {
+                            if layers_cfg[layer_level][0][i] == Action::Trans {
+                                layers_cfg[layer_level][0][i] = *action;
+                            }
+                        }
+                        both_anykey_used = true;
+                    } else {
+                        let input_key = input
+                            .atom(s.vars())
+                            .and_then(str_to_oscode)
+                            .ok_or_else(|| anyhow_expr!(input, "input must be a key name"))?;
+                        mapped_keys.insert(input_key);
+                        if !layer_mapped_keys.insert(input_key) {
+                            bail_expr!(input, "input key must not be repeated within a layer")
+                        }
+                        layers_cfg[layer_level][0][usize::from(input_key)] = *action;
+                    }
+                }
+                let rem = pairs.remainder();
+                if !rem.is_empty() {
+                    bail_expr!(&rem[0], "input must by followed by an action");
+                }
             }
         }
-        // Set fake keys on the `layer-switch` version of each layer.
-        for (y, action) in s.fake_keys.values() {
+        for (osc, layer_action) in layers_cfg[layer_level][0].iter_mut().enumerate() {
+            if s.block_unmapped_keys && *layer_action == Action::Trans && !is_a_button(osc as u16) {
+                *layer_action = Action::NoOp;
+            }
+        }
+
+        // Set fake keys on every layer.
+        for (y, action) in s.virtual_keys.values() {
             let (x, y) = get_fake_key_coords(*y);
-            layers_cfg[layer_level * 2][x as usize][y as usize] = **action;
+            layers_cfg[layer_level][x as usize][y as usize] = **action;
         }
 
         // If the user has configured delegation to the first (default) layer for transparent keys,
         // (as opposed to delegation to dofsrc), replace the dofsrc actions with the actions from
         // the first layer.
         if layer_level == 0 && s.delegate_to_first_layer {
-            for (dofsrc_ac, default_layer_ac) in s.dofsrc_layer.iter_mut().zip(layers_cfg[0][0]) {
-                *dofsrc_ac = default_layer_ac;
+            for (dofsrc_ac, default_layer_ac) in dofsrc_layer.iter_mut().zip(layers_cfg[0][0]) {
+                if default_layer_ac != Action::Trans {
+                    *dofsrc_ac = default_layer_ac;
+                }
             }
         }
     }
     Ok(layers_cfg)
 }
 
-const SEQ_ERR: &str = "dofseq expects pairs of parameters: <fake_key_name> <key_list>";
+const SEQ_ERR: &str = "dofseq expects pairs of parameters: <virtual_key_name> <key_list>";
 
-fn parse_sequences(exprs: &[&Vec<SExpr>], s: &ParsedState) -> Result<KeySeqsToFKeys> {
+fn parse_sequences(exprs: &[&Vec<SExpr>], s: &ParserState) -> Result<KeySeqsToFKeys> {
     let mut sequences = Trie::new();
     for expr in exprs {
         let mut subexprs = check_first_expr(expr.iter(), "dofseq")?.peekable();
 
-        while let Some(fake_key_expr) = subexprs.next() {
-            let fake_key = fake_key_expr.atom(s.vars()).ok_or_else(|| {
-                anyhow_expr!(fake_key_expr, "{SEQ_ERR}\nGot a list for fake_key_name")
+        while let Some(vkey_expr) = subexprs.next() {
+            let vkey = vkey_expr.atom(s.vars()).ok_or_else(|| {
+                anyhow_expr!(vkey_expr, "{SEQ_ERR}\nvirtual_key_name must not be a list")
             })?;
-            if !s.fake_keys.contains_key(fake_key) {
+            if !s.virtual_keys.contains_key(vkey) {
                 bail_expr!(
-                    fake_key_expr,
-                    "{SEQ_ERR}\nThe referenced key does not exist: {fake_key}"
+                    vkey_expr,
+                    "{SEQ_ERR}\nThe referenced key does not exist: {vkey}"
                 );
             }
-            let key_seq_expr = subexprs.next().ok_or_else(|| {
-                anyhow_expr!(fake_key_expr, "{SEQ_ERR}\nMissing key_list for {fake_key}")
-            })?;
+            let key_seq_expr = subexprs
+                .next()
+                .ok_or_else(|| anyhow_expr!(vkey_expr, "{SEQ_ERR}\nMissing key_list for {vkey}"))?;
             let key_seq = key_seq_expr.list(s.vars()).ok_or_else(|| {
                 anyhow_expr!(key_seq_expr, "{SEQ_ERR}\nGot a non-list for key_list")
             })?;
             if key_seq.is_empty() {
                 bail_expr!(key_seq_expr, "{SEQ_ERR}\nkey_list cannot be empty");
             }
+
             let keycode_seq = parse_sequence_keys(key_seq, s)?;
-            if sequences.ancestor_exists(&keycode_seq) {
-                bail_expr!(
-                    key_seq_expr,
-                    "Sequence has a conflict: its sequence contains an earlier defined sequence"
+
+            // Generate permutations of sequences for overlapping keys.
+            let mut permutations = vec![vec![]];
+            let mut vals = keycode_seq.iter().copied();
+            while let Some(val) = vals.next() {
+                if val & KEY_OVERLAP_MARKER == 0 {
+                    for p in permutations.iter_mut() {
+                        p.push(val);
+                    }
+                    continue;
+                }
+
+                if val == 0x0400 {
+                    bail_expr!(
+                        key_seq_expr,
+                        "O-(...) lists must have a minimum of 2 elements"
+                    );
+                }
+                let mut values_to_permute = vec![val];
+                for val in vals.by_ref() {
+                    if val == 0x0400 {
+                        break;
+                    }
+                    values_to_permute.push(val);
+                }
+
+                let ps = match values_to_permute.len() {
+                    0 | 1 => bail_expr!(
+                        key_seq_expr,
+                        "O-(...) lists must have a minimum of 2 elements"
+                    ),
+                    2..=6 => gen_permutations(&values_to_permute[..]),
+                    _ => bail_expr!(
+                        key_seq_expr,
+                        "O-(...) lists must have a maximum of 6 elements"
+                    ),
+                };
+
+                let mut new_permutations: Vec<Vec<u16>> = vec![];
+                for p in permutations.iter() {
+                    for p2 in ps.iter() {
+                        new_permutations.push(
+                            p.iter()
+                                .copied()
+                                .chain(p2.iter().copied().chain([KEY_OVERLAP_MARKER]))
+                                .collect(),
+                        );
+                    }
+                }
+                permutations = new_permutations;
+            }
+
+            for p in permutations.into_iter() {
+                if sequences.ancestor_exists(&p) {
+                    bail_expr!(
+                        key_seq_expr,
+                        "Sequence has a conflict: its sequence contains an earlier defined sequence"
+                        );
+                }
+                if sequences.descendant_exists(&p) {
+                    bail_expr!(key_seq_expr, "Sequence has a conflict: its sequence is contained within an earlier defined seqence");
+                }
+                sequences.insert(
+                    p,
+                    s.virtual_keys
+                        .get(vkey)
+                        .map(|(y, _)| get_fake_key_coords(*y))
+                        .expect("vk exists, checked earlier"),
                 );
             }
-            if sequences.descendant_exists(&keycode_seq) {
-                bail_expr!(key_seq_expr, "Sequence has a conflict: its sequence is contained within an earlier defined seqence");
-            }
-            sequences.insert(
-                keycode_seq,
-                s.fake_keys
-                    .get(fake_key)
-                    .map(|(y, _)| get_fake_key_coords(*y))
-                    .expect("fk exists, checked earlier"),
-            );
         }
     }
     Ok(sequences)
 }
 
-fn parse_sequence_keys(exprs: &[SExpr], s: &ParsedState) -> Result<Vec<u16>> {
-    use crate::sequences::*;
+fn parse_sequence_keys(exprs: &[SExpr], s: &ParserState) -> Result<Vec<u16>> {
     use SequenceEvent::*;
 
     // Reuse macro parsing but do some other processing since sequences don't support everything
@@ -2675,9 +3212,24 @@ fn parse_sequence_keys(exprs: &[SExpr], s: &ParsedState) -> Result<Vec<u16>> {
                                 for modk in mods_currently_held.iter().copied() {
                                     seq_num |= mod_mask_for_keycode(modk);
                                 }
-                                seq.push(seq_num);
+                                if seq_num & KEY_OVERLAP_MARKER == KEY_OVERLAP_MARKER
+                                    && seq_num & MASK_MODDED != KEY_OVERLAP_MARKER
+                                {
+                                    bail_expr!(
+                                        &exprs_remaining[0],
+                                        "O-(...) lists cannot be combined with other modifiers."
+                                    );
+                                }
+                                if *pressed != KEY_OVERLAP {
+                                    // Note: key overlap item is special and goes at the end,
+                                    // not the beginning
+                                    seq.push(seq_num);
+                                }
                             }
                             Release(released) => {
+                                if *released == KEY_OVERLAP {
+                                    seq.push(KEY_OVERLAP_MARKER);
+                                }
                                 if do_release_mod {
                                     mods_currently_held.remove(
                                         mods_currently_held
@@ -2706,7 +3258,7 @@ fn parse_sequence_keys(exprs: &[SExpr], s: &ParsedState) -> Result<Vec<u16>> {
     Ok(all_keys)
 }
 
-fn parse_arbitrary_code(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_arbitrary_code(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "arbitrary code expects one parameter: <code: 0-767>";
     if ac_params.len() != 1 {
         bail!("{ERR_MSG}");
@@ -2724,7 +3276,7 @@ fn parse_arbitrary_code(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static
     )))
 }
 
-fn parse_overrides(exprs: &[SExpr], s: &ParsedState) -> Result<Overrides> {
+fn parse_overrides(exprs: &[SExpr], s: &ParserState) -> Result<Overrides> {
     const ERR_MSG: &str =
         "dofoverrides expects pairs of parameters: <input key list> <output key list>";
     let mut subexprs = check_first_expr(exprs.iter(), "dofoverrides")?;
@@ -2773,7 +3325,7 @@ fn parse_overrides(exprs: &[SExpr], s: &ParsedState) -> Result<Overrides> {
     Ok(Overrides::new(&overrides))
 }
 
-fn parse_fork(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_fork(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     const ERR_STR: &str =
         "fork expects 3 params: <left-action> <right-action> <right-trigger-keys>";
     if ac_params.len() != 3 {
@@ -2794,7 +3346,11 @@ fn parse_fork(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAct
     }))))
 }
 
-fn parse_caps_word(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_caps_word(
+    ac_params: &[SExpr],
+    repress_behaviour: CapsWordRepressBehaviour,
+    s: &ParserState,
+) -> Result<&'static KanataAction> {
     const ERR_STR: &str = "caps-word expects 1 param: <timeout>";
     if ac_params.len() != 1 {
         bail!("{ERR_STR}\nFound {} params instead of 1", ac_params.len());
@@ -2802,6 +3358,7 @@ fn parse_caps_word(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static Kana
     let timeout = parse_non_zero_u16(&ac_params[0], s, "timeout")?;
     Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
         CustomAction::CapsWord(CapsWordCfg {
+            repress_behaviour,
             keys_to_capitalize: &[
                 KeyCode::A,
                 KeyCode::B,
@@ -2864,7 +3421,11 @@ fn parse_caps_word(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static Kana
     )))))
 }
 
-fn parse_caps_word_custom(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_caps_word_custom(
+    ac_params: &[SExpr],
+    repress_behaviour: CapsWordRepressBehaviour,
+    s: &ParserState,
+) -> Result<&'static KanataAction> {
     const ERR_STR: &str = "caps-word-custom expects 3 param: <timeout> <keys-to-capitalize> <extra-non-terminal-keys>";
     if ac_params.len() != 3 {
         bail!("{ERR_STR}\nFound {} params instead of 3", ac_params.len());
@@ -2873,6 +3434,7 @@ fn parse_caps_word_custom(ac_params: &[SExpr], s: &ParsedState) -> Result<&'stat
     Ok(s.a.sref(Action::Custom(
         s.a.sref(
             s.a.sref_slice(CustomAction::CapsWord(CapsWordCfg {
+                repress_behaviour,
                 keys_to_capitalize: s.a.sref_vec(
                     parse_key_list(&ac_params[1], s, "keys-to-capitalize")?
                         .into_iter()
@@ -2893,7 +3455,7 @@ fn parse_caps_word_custom(ac_params: &[SExpr], s: &ParsedState) -> Result<&'stat
 
 fn parse_macro_record_stop_truncate(
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Result<&'static KanataAction> {
     const ERR_STR: &str =
         "dynamic-macro-record-stop-truncate expects 1 param: <num-keys-to-truncate>";
@@ -2906,7 +3468,7 @@ fn parse_macro_record_stop_truncate(
     ))))
 }
 
-fn parse_sequence_start(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
+fn parse_sequence_start(ac_params: &[SExpr], s: &ParserState) -> Result<&'static KanataAction> {
     const ERR_MSG: &str =
         "sequence expects one or two params: <timeout-override> <?input-mode-override>";
     if !matches!(ac_params.len(), 1 | 2) {
@@ -2930,192 +3492,10 @@ fn parse_sequence_start(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static
     ))))
 }
 
-fn parse_switch(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    const ERR_STR: &str =
-        "switch expects triples of params: <key match> <action> <break|fallthrough>";
-
-    let mut cases = vec![];
-
-    let mut params = ac_params.iter();
-    loop {
-        let Some(key_match) = params.next() else {
-            break;
-        };
-        let Some(action) = params.next() else {
-            bail!("{ERR_STR}\nMissing <action> and <break|fallthrough> for the final triple");
-        };
-        let Some(break_or_fallthrough_expr) = params.next() else {
-            bail!("{ERR_STR}\nMissing <break|fallthrough> for the final triple");
-        };
-
-        let Some(key_match) = key_match.list(s.vars()) else {
-            bail_expr!(key_match, "{ERR_STR}\n<key match> must be a list")
-        };
-        let mut ops = vec![];
-        for op in key_match.iter() {
-            parse_switch_case_bool(1, op, &mut ops, s)?;
-        }
-
-        let action = parse_action(action, s)?;
-
-        let Some(break_or_fallthrough) = break_or_fallthrough_expr.atom(s.vars()) else {
-            bail_expr!(
-                break_or_fallthrough_expr,
-                "{ERR_STR}\nthis must be one of: break, fallthrough"
-            );
-        };
-        let break_or_fallthrough = match break_or_fallthrough {
-            "break" => BreakOrFallthrough::Break,
-            "fallthrough" => BreakOrFallthrough::Fallthrough,
-            _ => bail_expr!(
-                break_or_fallthrough_expr,
-                "{ERR_STR}\nthis must be one of: break, fallthrough"
-            ),
-        };
-        cases.push((s.a.sref_vec(ops), action, break_or_fallthrough));
-    }
-    Ok(s.a.sref(Action::Switch(s.a.sref(Switch {
-        cases: s.a.sref_vec(cases),
-    }))))
-}
-
-/// Returns the
-fn parse_switch_case_bool(
-    depth: u8,
-    op_expr: &SExpr,
-    ops: &mut Vec<OpCode>,
-    s: &ParsedState,
-) -> Result<()> {
-    if ops.len() > MAX_OPCODE_LEN as usize {
-        bail_expr!(
-            op_expr,
-            "maximum key match size of {MAX_OPCODE_LEN} items is exceeded"
-        );
-    }
-    if usize::from(depth) > MAX_BOOL_EXPR_DEPTH {
-        bail_expr!(
-            op_expr,
-            "maximum key match expression depth {MAX_BOOL_EXPR_DEPTH} is exceeded"
-        );
-    }
-    if let Some(a) = op_expr.atom(s.vars()) {
-        let osc = str_to_oscode(a).ok_or_else(|| anyhow_expr!(op_expr, "invalid key name"))?;
-        ops.push(OpCode::new_key(osc.into()));
-        Ok(())
-    } else {
-        let l = op_expr
-            .list(s.vars())
-            .expect("must be a list, checked atom");
-        if l.is_empty() {
-            bail_expr!(op_expr, "key match cannot contain empty lists inside");
-        }
-        #[derive(PartialEq)]
-        enum AllowedListOps {
-            Or,
-            And,
-            KeyHistory,
-        }
-        let op = l[0]
-            .atom(s.vars())
-            .and_then(|s| match s {
-                "or" => Some(AllowedListOps::Or),
-                "and" => Some(AllowedListOps::And),
-                "key-history" => Some(AllowedListOps::KeyHistory),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                anyhow_expr!(
-                    op_expr,
-                    "lists inside key match must begin with one of: or, and, key-history"
-                )
-            })?;
-        match op {
-            AllowedListOps::KeyHistory => {
-                if l.len() != 3 {
-                    bail_expr!(
-                        op_expr,
-                        "key-history must have 2 parameters: key, key-recency"
-                    );
-                }
-                let osc = l[1]
-                    .atom(s.vars())
-                    .and_then(str_to_oscode)
-                    .ok_or_else(|| anyhow_expr!(op_expr, "invalid key name"))?;
-                let key_recency = parse_u8_with_range(&l[2], s, "key-recency", 1, 8)? - 1;
-                ops.push(OpCode::new_key_history(osc.into(), key_recency));
-                Ok(())
-            }
-            AllowedListOps::Or | AllowedListOps::And => {
-                let op = match op {
-                    AllowedListOps::Or => BooleanOperator::Or,
-                    AllowedListOps::And => BooleanOperator::And,
-                    _ => unreachable!(),
-                };
-                // insert a placeholder for now, don't know the end index yet.
-                let placeholder_index = ops.len() as u16;
-                ops.push(OpCode::new_bool(op, placeholder_index));
-                for op in l.iter().skip(1) {
-                    parse_switch_case_bool(depth + 1, op, ops, s)?;
-                }
-                ops[placeholder_index as usize] = OpCode::new_bool(op, ops.len() as u16);
-                Ok(())
-            }
-        }
-    }
-}
-
-fn parse_on_idle_fakekey(ac_params: &[SExpr], s: &ParsedState) -> Result<&'static KanataAction> {
-    const ERR_MSG: &str =
-        "on-idle-fakekey expects three parameters:\n<fake key name> <(tap|press|release)> <idle time>\n";
-    if ac_params.len() != 3 {
-        bail!("{ERR_MSG}");
-    }
-    let y = match s.fake_keys.get(ac_params[0].atom(s.vars()).ok_or_else(|| {
-        anyhow_expr!(
-            &ac_params[0],
-            "{ERR_MSG}\nInvalid first parameter: a fake key name cannot be a list",
-        )
-    })?) {
-        Some((y, _)) => *y as u16, // cast should be safe; checked in `parse_fake_keys`
-        None => bail_expr!(
-            &ac_params[0],
-            "{ERR_MSG}\nInvalid first parameter: unknown fake key name {:?}",
-            &ac_params[0]
-        ),
-    };
-    let action = ac_params[1]
-        .atom(s.vars())
-        .and_then(|a| match a {
-            "tap" => Some(FakeKeyAction::Tap),
-            "press" => Some(FakeKeyAction::Press),
-            "release" => Some(FakeKeyAction::Release),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            anyhow_expr!(
-                &ac_params[1],
-                "{ERR_MSG}\nInvalid second parameter, it must be one of: tap, press, release",
-            )
-        })?;
-    let idle_duration = parse_u16(&ac_params[2], s, "idle time").map_err(|mut e| {
-        e.msg = format!("{ERR_MSG}\nInvalid third parameter: {}", e.msg);
-        e
-    })?;
-    let (x, y) = get_fake_key_coords(y);
-    let coord = Coord { x, y };
-    Ok(s.a.sref(Action::Custom(s.a.sref(s.a.sref_slice(
-        CustomAction::FakeKeyOnIdle(FakeKeyOnIdle {
-            coord,
-            action,
-            idle_duration,
-        }),
-    )))))
-}
-
 fn parse_unmod(
     unmod_type: &str,
     ac_params: &[SExpr],
-    s: &ParsedState,
+    s: &ParserState,
 ) -> Result<&'static KanataAction> {
     const ERR_MSG: &str = "expects expects at least one key name";
     if ac_params.is_empty() {
@@ -3141,133 +3521,4 @@ fn parse_unmod(
         ))),
         _ => panic!("Unknown unmod type {unmod_type}"),
     }
-}
-
-/// Creates a `KeyOutputs` from `layers::LAYERS`.
-fn create_key_outputs(layers: &KanataLayers, overrides: &Overrides) -> KeyOutputs {
-    let mut outs = KeyOutputs::new();
-    for layer in layers.iter() {
-        let mut layer_outputs = HashMap::default();
-        for (i, action) in layer[0].iter().enumerate() {
-            let osc_slot = match i.try_into() {
-                Ok(i) => i,
-                Err(_) => continue,
-            };
-            add_key_output_from_action_to_key_pos(osc_slot, action, &mut layer_outputs, overrides);
-        }
-        outs.push(layer_outputs);
-    }
-    for layer_outs in outs.iter_mut() {
-        for keys_out in layer_outs.values_mut() {
-            keys_out.shrink_to_fit();
-        }
-        layer_outs.shrink_to_fit();
-    }
-    outs.shrink_to_fit();
-    outs
-}
-
-fn add_key_output_from_action_to_key_pos(
-    osc_slot: OsCode,
-    action: &KanataAction,
-    outputs: &mut HashMap<OsCode, Vec<OsCode>>,
-    overrides: &Overrides,
-) {
-    match action {
-        Action::KeyCode(kc) => {
-            add_kc_output(osc_slot, kc.into(), outputs, overrides);
-        }
-        Action::HoldTap(HoldTapAction {
-            tap,
-            hold,
-            timeout_action,
-            ..
-        }) => {
-            add_key_output_from_action_to_key_pos(osc_slot, tap, outputs, overrides);
-            add_key_output_from_action_to_key_pos(osc_slot, hold, outputs, overrides);
-            add_key_output_from_action_to_key_pos(osc_slot, timeout_action, outputs, overrides);
-        }
-        Action::OneShot(OneShot { action: ac, .. }) => {
-            add_key_output_from_action_to_key_pos(osc_slot, ac, outputs, overrides);
-        }
-        Action::MultipleKeyCodes(kcs) => {
-            for kc in kcs.iter() {
-                add_kc_output(osc_slot, kc.into(), outputs, overrides);
-            }
-        }
-        Action::MultipleActions(actions) => {
-            for ac in actions.iter() {
-                add_key_output_from_action_to_key_pos(osc_slot, ac, outputs, overrides);
-            }
-        }
-        Action::TapDance(TapDance { actions, .. }) => {
-            for ac in actions.iter() {
-                add_key_output_from_action_to_key_pos(osc_slot, ac, outputs, overrides);
-            }
-        }
-        Action::Fork(ForkConfig { left, right, .. }) => {
-            add_key_output_from_action_to_key_pos(osc_slot, left, outputs, overrides);
-            add_key_output_from_action_to_key_pos(osc_slot, right, outputs, overrides);
-        }
-        Action::Chords(ChordsGroup { chords, .. }) => {
-            for (_, ac) in chords.iter() {
-                add_key_output_from_action_to_key_pos(osc_slot, ac, outputs, overrides);
-            }
-        }
-        Action::Switch(Switch { cases }) => {
-            for case in cases.iter() {
-                add_key_output_from_action_to_key_pos(osc_slot, case.1, outputs, overrides);
-            }
-        }
-        Action::Custom(cacs) => {
-            for ac in cacs.iter() {
-                match ac {
-                    CustomAction::Unmodded { keys } | CustomAction::Unshifted { keys } => {
-                        for k in keys.iter() {
-                            add_kc_output(osc_slot, k.into(), outputs, overrides);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Action::NoOp
-        | Action::Trans
-        | Action::Repeat
-        | Action::Layer(_)
-        | Action::DefaultLayer(_)
-        | Action::Sequence { .. }
-        | Action::RepeatableSequence { .. }
-        | Action::CancelSequences
-        | Action::ReleaseState(_) => {}
-    };
-}
-
-fn add_kc_output(
-    osc_slot: OsCode,
-    osc: OsCode,
-    outs: &mut HashMap<OsCode, Vec<OsCode>>,
-    overrides: &Overrides,
-) {
-    let outputs = match outs.entry(osc_slot) {
-        Entry::Occupied(o) => o.into_mut(),
-        Entry::Vacant(v) => v.insert(vec![]),
-    };
-    if !outputs.contains(&osc) {
-        outputs.push(osc);
-    }
-    for ov_osc in overrides
-        .output_non_mods_for_input_non_mod(osc)
-        .iter()
-        .copied()
-    {
-        if !outputs.contains(&ov_osc) {
-            outputs.push(ov_osc);
-        }
-    }
-}
-
-/// Create a layout from `layers::LAYERS`.
-fn create_layout(layers: Box<KanataLayers>, a: Arc<Allocations>) -> KanataLayout {
-    KanataLayout::new(Layout::new(a.bref(layers)), a)
 }

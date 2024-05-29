@@ -1,5 +1,13 @@
 #|
 This is a sample configuration file that showcases every feature in kanata.
+A more detailed and less terse configuration guide is found here:
+
+    https://github.com/jtroo/kanata/blob/main/docs/config.adoc
+
+Other configuration samples are found here:
+
+    https://github.com/jtroo/kanata/tree/main/cfg_samples
+
 If anything is confusing or hard to discover, please file an issue or
 contribute a pull request to help improve the document.
 
@@ -11,9 +19,6 @@ three following keys together at the same time will cause kanata to exit:
 This is for the physical key input rather than after any remappings
 that are done by kanata.
 
-This mechanism works on the key input*before any remappings done by kanata.
-
-https://github.com/jtroo/kanata/blob/main/docs/config.adoc
 |#
 
 ;; Single-line comments are prefixed by double-semicolon. A single semicolon
@@ -87,6 +92,18 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;;
   ;; linux-x11-repeat-delay-rate 400,50
 
+  ;; On linux, you can ask kanata to label itself as a trackpoint. This has several
+  ;; effects on libinput including enabling middle mouse button scrolling and using
+  ;; a different acceleration curve. Otherwise, a trackpoint intercepted by kanata
+  ;; may not behave as expected.
+  ;;
+  ;; If using this feature, it is recommended to filter out any non-trackpoint
+  ;; pointing devices using linux-only-linux-dev-names-include,
+  ;; linux-only-linux-dev-names-exclude or linux-only-linux-dev to avoid changing
+  ;; their behavior as well.
+  ;;
+  ;; linux-use-trackpoint-property yes
+
   ;; Unicode on Linux works by pressing Ctrl+Shift+U, typing the unicode hex value,
   ;; then pressing Enter. However, if you do remapping in userspace, e.g. via
   ;; xmodmap/xkb, the keycode "U" that kanata outputs may not become a keysym "u"
@@ -150,6 +167,14 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;;
   ;; process-unmapped-keys yes
 
+  ;; We need to set it to yes in this kanata.kbd example config to allow the use of __ and ___
+  ;; in the doflayer-custom-map example below in the file
+  process-unmapped-keys yes
+
+  ;; Disable all keys not mapped in dofsrc.
+  ;; Only works if process-unmapped-keys is also yes.
+  ;; block-unmapped-keys yes
+
   ;; Intercept mouse buttons for a specific mouse device.
   ;; The intended use case for this is for laptops such as a Thinkpad, which have
   ;; mouse buttons that may be useful to activate kanata actions with. This only
@@ -162,6 +187,22 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; entry. If this dofcfg item is not defined, the log will not print.
   ;;
   ;; windows-interception-mouse-hwid "70, 0, 90, 0, 20"
+
+  ;; There is also a list version of windows-interception-mouse-hwid:
+  ;;
+  ;; windows-interception-mouse-hwids (
+  ;;   "70, 0, 60, 0"
+  ;;   "71, 0, 62, 0"
+  ;; )
+
+  ;; List configuration for kanata-wintercept variants
+  ;; that allows intercepting only some connected keyboards.
+  ;; Use similarly to mouse-hwid above.
+  ;;
+  ;; windows-interception-keyboard-hwids (
+  ;;   "90, 80, 11, 34"
+  ;;   "99, 88, 77, 66"
+  ;; )
 
   ;; Transparent keys on layers will delegate to the corresponding dofsrc key
   ;; when found on a layer activated by `layer-switch`. This config entry
@@ -194,16 +235,36 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; in time expire their timeout quicker. Without this, the timeout for the 2nd
   ;; tap-hold onwards will start from 0ms after the previous tap-hold expires.
   ;;
-  ;; concurrent-tap-hold yes
+  concurrent-tap-hold yes
+
+  ;; This configuration makes the release of one-shot-press and of the tap in a tap-hold
+  ;; by the defined number of milliseconds (approximate).
+  ;; The default value is 5.
+  ;; While the release is delayed, further processing of inputs is also paused.
+  ;; This means that there will be a minor input latency impact in the mentioned scenarios.
+  ;; The reason for this configuration existing is that some environments
+  ;; do not process the scenarios correctly due to the rapidity of the release.
+  ;; Kanata does send the events in the correct order,
+  ;; so the fault is more in the environment, but kanata provides a workaround anyway.
+  rapid-event-delay 5
+
+  ;; This setting defaults to yes but can be configured to no to save on
+  ;; logging. However, if --log-layer-changes is passed as a command line
+  ;; argument, a "no" in the configuration file will be overridden and layer
+  ;; changes will be logged.
+  ;;
+  ;; log-layer-changes no
 )
 
 ;; doflocalkeys-* enables you to define and use key names that match your locale
 ;; by defining OS code number mappings for that character.
 ;;
-;; There are three variants of doflocalkeys-*:
+;; There are five variants of doflocalkeys-*:
 ;; - doflocalkeys-win
+;; - doflocalkeys-winiov2
 ;; - doflocalkeys-wintercept
 ;; - doflocalkeys-linux
+;; - doflocalkeys-macos
 ;;
 ;; Only one of each doflocalkeys-* variant is allowed. The variants that are
 ;; not applicable will be ignored, e.g. doflocalkeys-linux and doflocalkeys-wintercept
@@ -231,6 +292,10 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 )
 
 (doflocalkeys-wintercept
+  ì 187
+)
+
+(doflocalkeys-winiov2
   ì 187
 )
 
@@ -265,8 +330,6 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 ;; The first layer defined is the layer that will be active by default when
 ;; kanata starts up. This layer is the standard QWERTY layout except for the
 ;; backtick/grave key (@grl) which is an alias for a tap-hold key.
-;;
-;; There are currently a maximum of 25 layers allowed.
 (doflayer qwerty
   @grl 1    2    3    4    5    6    7    8    9    0    -    =    bspc
   tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
@@ -285,12 +348,45 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   lctl lmet lalt           spc           @ralt rmet @rcl
 )
 
+;; This is an alternative to doflayer and does not rely on dofsrc.
+;; It has the advantage of simpler config if only remapping a few keys.
+;; You might still prefer the standard doflayer for its visual printing in
+;; the log as you are learning a new configuration.
+(doflayermap (custom-map-example)
+  caps esc
+  esc  caps
+
+  ;; You can use _ , __ or ___ instead of specifying a key name to map all
+  ;; keys that are not explicitly mapped in the layer.
+  ;; E.g. esc and caps above will not be overwritten.
+  ;;
+  ;; _    maps only keys that are in dofsrc.
+  ;; __   excludes mapping keys that are in dofsrc.
+  ;; ___  maps both, keys that are in `dofsrc`, and keys that are not.
+  ;;
+  ;; The two- and three-underscore variants require
+  ;; "process-unmapped-keys yes" in dofcfg to work.
+
+  ;; ___ XX ;; maps all keys that are not mapped explicitly in the layer
+  ;;          ;; (i.e. esc and caps above) to "no-op" to disable the key.
+  _ XX   ;; maps all keys that are in dofsrc and are not mapped in the layer
+  __ XX  ;; maps all keys that are NOT in dofsrc and are not mapped in the layer
+)
+
 ;; dofvar can be used to declare commonly-used values
 (dofvar
   tap-timeout   100
   hold-timeout  200
   tt $tap-timeout
   ht $hold-timeout
+
+  ;; A list value in dofvar that begins with concat behaves in a special manner
+  ;; where strings will be joined together.
+  ;;
+  ;; Below results in 100200
+  a "hello"
+  b "world"
+  ct (concat $a " " $b)
 )
 
 (dofalias
@@ -396,6 +492,20 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ralt (multi ralt (layer-toggle ralted))
 )
 
+;; Wrapping a top-level configuration item in a list beginning with
+;; (environment (env-var-name env-var-value) ...configuration...)
+;; will make the configuration only active if the environment variable matches.
+(environment (LAPTOP lp1)
+  (dofalias met @lp1met)
+)
+
+(environment (LAPTOP lp2)
+  (dofalias met @lp2met)
+)
+
+;; NOTE: the configuration below is an older and less general variant
+;; of the environment configuration above.
+;;
 ;; The dofaliasenvcond variant of dofalias is parsed similarly, but there must
 ;; be a list parameter first. The list must contain two strings. In order,
 ;; these strings are: an environment variable name, and the environment
@@ -530,9 +640,35 @@ If you need help, please feel welcome to ask in the GitHub discussions.
     ;;    a || b || c
     (a b c) b fallthrough
 
-    ;; key-history evaluates to true if the n'th most recent key press,
+    ;; key-history evaluates to true if the n'th most recent typed key,
     ;; {n | n ∈ [1, 8]}, matches the given key.
     ((key-history a 1) (key-history b 8)) c break
+
+    ;; key-timing evaluates to true if the n'th most recent typed key,
+    ;; {n | n ∈ [1, 8]}, was typed at a time less-than/greater-than the
+    ;; given number of milliseconds.
+    ((key-timing 1 lt 3000)       (key-timing 2 gt 30000)        ) c break
+    ((key-timing 7 less-than 200) (key-timing 8 greater-than 500)) c break
+
+    ;; not means "not any of the list constituents".
+    ;; The example below behaves like:
+    ;;
+    ;;    !(a || b || c)
+    ;;
+    ;; and is equivalent to:
+    ;;
+    ;;    ((not (or a b c)))
+    ((not a b c)) c break
+
+    ;; input logic
+    ((input real lctl)) d break
+    ((input virtual sft)) e break
+    ((input-history real lsft 2)) f break
+    ((input-history virtual ctl 2)) g break
+
+    ;; layer evaluates to `true` if the active layer matches the given name
+    ((layer dvorak)) x break
+    ((layer qwerty)) y break
 
     ;; default case, empty list always evaluates to true.
     ;; break vs. fallthrough doesn't matter here
@@ -565,11 +701,15 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   _    _    _              _              _    _    _
 )
 
-;; The `lrld` action stands for "live reload". This will re-parse everything
-;; except for linux-dev. So in Linux, you cannot live reload and switch keyboard
-;; devices at the time of writing. The variants `lrpv` and `lrnx` will cycle
-;; between multiple configuration files, if they are specified in the startup.
-;; arguments. The list action variant `lrld-num` takes a number parameter and
+;; The `lrld` action stands for "live reload".
+;;
+;; NOTE: live reload does not read changes to device-related configurations,
+;; such as `linux-dev`, `macos-dev-names-include`,
+;; or `windows-only-windows-interception-keyboard-hwids`.
+;;
+;; The variants `lrpv` and `lrnx` will cycle between multiple configuration files
+;; if they are specified in the startup arguments.
+;; The list action variant `lrld-num` takes a number parameter and
 ;; reloads the configuration file specified by the number, according to the
 ;; order passed into the arguments on kanata startup.
 ;;
@@ -669,6 +809,17 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; This example is similar to the default caps-word behaviour but it moves the
   ;; 0-9 keys to capitalized key list from the extra non-terminating key list.
   cwc (caps-word-custom
+    2000
+    (a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9)
+    (kp0 kp1 kp2 kp3 kp4 kp5 kp6 kp7 kp8 kp9 bspc del up down left rght)
+  )
+)
+
+;; -toggle variants of caps-word will terminate caps-word on repress if it is
+;; currently active, otherwise caps-word will be activated.
+(dofalias
+  cwt (caps-word-toggle 2000)
+  cct (caps-word-custom-toggle
     2000
     (a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9)
     (kp0 kp1 kp2 kp3 kp4 kp5 kp6 kp7 kp8 kp9 bspc del up down left rght)
@@ -815,6 +966,37 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   _    _    _              _              _    _    _
 )
 
+;; Virtual key actions
+
+(defvirtualkeys
+  ;; Define some virtual keys that perform modifier actions
+  vkctl lctl
+  vksft lsft
+  vkmet lmet
+  vkalt lalt
+
+  ;; A virtual key that toggles all modifier virtual keys above
+  vktal (multi
+        (on-press toggle-virtualkey vkctl)
+        (on-press toggle-virtualkey vksft)
+        (on-press toggle-virtualkey vkmet)
+        (on-press toggle-virtualkey vkalt)
+      )
+
+  ;; Virtual key that activates a macro
+  vkmacro (macro h e l l o spc w o r l d)
+)
+
+(dofalias
+  psfvk (on-press press-virtualkey   vksft)
+  rsfvk (on-press release-virtualkey vksft)
+
+  palvk (on-press tap-vkey vktal)
+  macvk (on-press tap-vkey vkmacro)
+
+  isfvk (on-idle 1000 tap-vkey vksft)
+)
+
 ;; Press and release fake keys.
 ;;
 ;; Fake keys can't be pressed by any physical keyboard buttons and can only be
@@ -953,6 +1135,20 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 (dofalias dot-sequence (macro (sequence 250) 10 .))
 (dofalias dot-sequence-inputmode (macro (sequence 250 hidden-delay-type) 10 .))
 
+;; There are special keys that you can assign in your actions which will
+;; never output events to your operating system, but which you can use
+;; in sequences. They are named: nop0-nop9.
+(dofseq
+    dotcom (nop0 nop1)
+    dotorg (nop8 nop9)
+)
+
+;; A key list within O-(...) signifies simultaneous presses.
+(dofseq
+    dotcom (O-(. c m))
+    dotorg (O-(. r g))
+)
+
 ;; Input chording.
 ;;
 ;; Not to be confused with output chords (like C-S-a or the chords layer
@@ -1018,4 +1214,102 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 ;; The top-level action `include` will read a configuration from a new file.
 ;; At the time of writing, includes can only be placed at the top level. The
 ;; included files also cannot contain includes themselves.
-(include included-file.kbd)
+;;
+;; (include included-file.kbd)
+
+
+;; The top-level item `deftemplate` declares a template
+;; which can be expanded multiple times to reduce repetition.
+;;
+;; Expansion of a template is done via `expand-template`.
+
+;; This template defines a chord group and aliases that use the chord group.
+;; The purpose is to easily define the same chord position behaviour
+;; for multiple layers that have different underlying keys.
+(deftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
+  (dofalias
+    $alias1 (chord $chordgroupname $k1)
+    $alias2 (chord $chordgroupname $k2)
+    $alias3 (chord $chordgroupname $k3)
+    $alias4 (chord $chordgroupname $k4)
+  )
+  (dofchords $chordgroupname $chord-timeout
+    ($k1) $k1
+    ($k2) $k2
+    ($k3) $k3
+    ($k4) $k4
+    ($k1 $k2) lctl
+    ($k3 $k4) lsft
+  )
+)
+
+(dofvar chord-timeout 200)
+
+(template-expand left-hand-chords qwerty a s d f qwa qws qwd qwf)
+;; You can use t! as a short form of template-expand
+(t! left-hand-chords dvorak a o e u dva dvo dve dvu)
+
+(doflayer template-example
+  _    _    _    _    _    _    _    _    _    _    _    _    _    _
+  _    @qwa @qws @qwd @qwf _    _    _    _    _    _    _    _    _
+  _    @dva @dvo @dve @dvu _    _    _    _    _    _    _    _
+  _    _    _    _    _    _    _    _    _    _    _    _
+  _    _    _              _              _    _    _
+)
+
+;; Within a deftemplate you can use if-equal to conditionally insert content
+;; into the template.
+
+(deftemplate home-row (version)
+  a s d f g h
+  (if-equal $version v1 j)
+  (if-equal $version v2 (tap-hold 200 200 j lctl))
+   k l ; '
+)
+
+(deftemplate common-overrides ()
+  (lctl 7) (lctl lsft tab)
+  (lctl 9) (lctl tab)
+  (lalt 7) (lalt lsft tab)
+  (lalt 9) (lalt tab)
+)
+
+;; Wrapping a top-level configuration item in a list beginning with
+;; (platform (applicable-platforms...) ...configuration...)
+;; will make the configuration only active on a specific platform.
+(platform (macos)
+  ;; Only on macos, use command arrows to jump/delete words
+  ;; because command is used for so many other things
+  ;; and it's weird that these cases use alt.
+  (dofoverrides
+    (lmet bspc)  (lalt bspc)
+    (lmet left)  (lalt left)
+    (lmet right) (lalt right)
+    (template-expand common-overrides)
+  )
+)
+(platform (win winiov2 wintercept linux)
+  (dofoverrides
+    (template-expand common-overrides)
+  )
+)
+
+#|
+
+Global input chords.
+
+Syntax (5-tuples):
+
+    (dofchordsv2-experimental
+      (participating-keys1) action1 timeout1 release-behaviour1 (disabled-layers1)
+        ...
+      (participating-keysN) actionN timeoutN release-behaviourN (disabled-layersN)
+    )
+
+|#
+
+(dofchordsv2-experimental
+  (a b)      c                200 all-released  (arrows)
+  (a b z)   (macro h e l l o) 250 first-release (arrows)
+  (a b z y) (macro b y e)     400 first-release (arrows)
+)

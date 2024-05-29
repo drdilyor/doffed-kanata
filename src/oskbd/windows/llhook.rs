@@ -3,6 +3,12 @@
 // This file is taken from kbremap with minor modifications.
 // https://github.com/timokroeger/kbremap
 
+#![cfg_attr(
+    feature = "simulated_output",
+    allow(dead_code, unused_imports, unused_variables, unused_mut)
+)]
+
+use core::fmt;
 use std::cell::Cell;
 use std::io;
 use std::{mem, ptr};
@@ -14,8 +20,11 @@ use winapi::um::winuser::*;
 
 use crate::kanata::CalculatedMouseMove;
 use crate::oskbd::{KeyEvent, KeyValue};
+use kanata_keyberon::key_code::KeyCode;
 use kanata_parser::custom_action::*;
 use kanata_parser::keys::*;
+
+pub const LLHOOK_IDLE_TIME_CLEAR_INPUTS: u64 = 60;
 
 type HookFn = dyn FnMut(InputEvent) -> bool;
 
@@ -71,15 +80,46 @@ pub struct InputEvent {
     pub up: bool,
 }
 
+impl fmt::Display for InputEvent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let direction = if self.up { "↑" } else { "↓" };
+        let key_name = KeyCode::from(OsCode::from(self.code));
+        write!(f, "{}{:?}", direction, key_name)
+    }
+}
+
 impl InputEvent {
+    #[rustfmt::skip]
     fn from_hook_lparam(lparam: &KBDLLHOOKSTRUCT) -> Self {
+        let code = if lparam.vkCode == (VK_RETURN as u32) {
+            match lparam.flags & 0x1 {
+                0 => VK_RETURN as u32,
+                _ => u32::from(VK_KPENTER_FAKE),
+            }
+        } else {
+            #[cfg(not(feature = "win_llhook_read_scancodes"))]
+            {
+                lparam.vkCode
+            }
+            #[cfg(feature = "win_llhook_read_scancodes")]
+            {
+                let extended = if lparam.flags & 0x1 == 0x1 {
+                    0xE000
+                } else {
+                    0
+                };
+                crate::oskbd::u16_to_osc((lparam.scanCode as u16) | extended)
+                    .map(Into::into)
+                    .unwrap_or(lparam.vkCode)
+            }
+        };
         Self {
-            code: lparam.vkCode,
+            code,
             up: lparam.flags & LLKHF_UP != 0,
         }
     }
 
-    fn from_oscode(code: OsCode, val: KeyValue) -> Self {
+    pub fn from_oscode(code: OsCode, val: KeyValue) -> Self {
         Self {
             code: code.into(),
             up: val.into(),
@@ -110,22 +150,59 @@ impl From<KeyEvent> for InputEvent {
 }
 
 /// The actual WinAPI compatible callback.
+/// code: determines how to process the message
+/// source: https://learn.microsoft.com/windows/win32/winmsg/lowlevelkeyboardproc
+///   <0 : must pass the message to CallNextHookEx without further processing
+///    and should return the value returned by CallNextHookEx
+///   HC_ACTION (=0) : wParam and lParam parameters contain information about the message
+///
+/// wparam: ID keyboard message
+/// source: https://learn.microsoft.com/windows/win32/winmsg/lowlevelkeyboardproc
+///   WM_KEY(DOWN|UP) Posted to kb-focused window when a nonsystem key is pressed
+///   WM_SYSKEYDOWN¦UP Posted to kb-focused window when a F10 (activate menu bar)
+///     or ⎇X⃣ or posted to active window if no win has kb focus (check context code in lParam)
+///
+/// lparam: pointer to a KBDLLHOOKSTRUCT struct
+/// source: https://learn.microsoft.com/windows/win32/api/winuser/ns-winuser-kbdllhookstruct
+///   vkCode     :DWORD key's virtual code (1–254)
+///   scanCode   :DWORD key's hardware scan code
+///   flags      :DWORD flags (extended-key, event-injected, transition-state), context code
+///     Bits (2-3 6 reserved)                        Description
+///     7 KF_UP       >> 8 LLKHF_UP                  transition state: 0=key↓  1=key↑
+///                                                           (being pressed)  (being released)
+///     5 KF_ALTDOWN  >> 8 LLKHF_ALTDOWN             context code    : 1=alt↓  0=alt↑
+///     4 0x10             LLKHF_INJECTED            event was injected: 1=yes, 0=no
+///     1 0x02             LLKHF_LOWER_IL_INJECTED   injected by proc with lower integrity level
+//                                                   1=yes 0=no (bit 4 will also set)
+///     0 KF_EXTENDED >> 8 LLKHF_EXTENDED            extended key (Fn, numpad): 1=yes, 0=no
+///   time       :DWORD time stamp = GetMessageTime
+///   dwExtraInfo:ULONG_PTR Additional info
 unsafe extern "system" fn hook_proc(code: c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let hook_lparam = &*(lparam as *const KBDLLHOOKSTRUCT);
     let is_injected = hook_lparam.flags & LLKHF_INJECTED != 0;
-    log::trace!("{code}, {wparam:?}, {is_injected}");
-    if code != HC_ACTION {
+    log::trace!("{code} {}{wparam} {is_injected}", {
+        match wparam as u32 {
+            WM_KEYDOWN => "↓",
+            WM_KEYUP => "↑",
+            WM_SYSKEYDOWN => "sys↓",
+            WM_SYSKEYUP => "sys↑",
+            _ => "?",
+        }
+    });
+
+    // Regarding code check:
+    // If code is non-zero (technically <0, but 0 is the only valid value anyway),
+    // then it must be forwarded.
+    // Source: https://learn.microsoft.com/windows/win32/winmsg/lowlevelkeyboardproc
+    //
+    // Regarding in_injected check:
+    // `SendInput()` internally calls the hook function.
+    // Filter out injected events to prevent infinite recursion.
+    if code != HC_ACTION || is_injected {
         return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
     }
 
     let key_event = InputEvent::from_hook_lparam(hook_lparam);
-
-    // `SendInput()` internally calls the hook function. Filter out injected events
-    // to prevent recursion and potential stack overflows if our remapping logic
-    // sent the injected event.
-    if is_injected {
-        return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
-    }
 
     let mut handled = false;
     HOOK.with(|state| {
@@ -147,9 +224,11 @@ unsafe extern "system" fn hook_proc(code: c_int, wparam: WPARAM, lparam: LPARAM)
     }
 }
 
+#[cfg(all(not(feature = "simulated_output"), not(feature = "passthru_ahk")))]
 /// Handle for writing keys to the OS.
 pub struct KbdOut {}
 
+#[cfg(all(not(feature = "simulated_output"), not(feature = "passthru_ahk")))]
 impl KbdOut {
     pub fn new() -> Result<Self, io::Error> {
         Ok(Self {})

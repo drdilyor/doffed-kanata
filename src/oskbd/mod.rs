@@ -15,6 +15,53 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
 
+#[cfg(any(
+    all(
+        not(feature = "simulated_input"),
+        feature = "simulated_output",
+        not(feature = "passthru_ahk")
+    ),
+    all(
+        feature = "simulated_input",
+        not(feature = "simulated_output"),
+        not(feature = "passthru_ahk")
+    )
+))]
+mod simulated; // has KbdOut
+#[cfg(any(
+    all(
+        not(feature = "simulated_input"),
+        feature = "simulated_output",
+        not(feature = "passthru_ahk")
+    ),
+    all(
+        feature = "simulated_input",
+        not(feature = "simulated_output"),
+        not(feature = "passthru_ahk")
+    )
+))]
+pub use simulated::*;
+#[cfg(any(
+    all(feature = "simulated_input", feature = "simulated_output"),
+    all(
+        feature = "simulated_input",
+        feature = "simulated_output",
+        feature = "passthru_ahk"
+    ),
+))]
+mod sim_passthru; // has KbdOut
+#[cfg(any(
+    all(feature = "simulated_input", feature = "simulated_output"),
+    all(
+        feature = "simulated_input",
+        feature = "simulated_output",
+        feature = "passthru_ahk"
+    ),
+))]
+pub use sim_passthru::*;
+
+pub const HI_RES_SCROLL_UNITS_IN_LO_RES: u16 = 120;
+
 // ------------------ KeyValue --------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -23,6 +70,7 @@ pub enum KeyValue {
     Press = 1,
     Repeat = 2,
     Tap,
+    WakeUp,
 }
 
 impl From<i32> for KeyValue {
@@ -59,10 +107,25 @@ pub struct KeyEvent {
     pub value: KeyValue,
 }
 
-#[cfg(not(all(feature = "interception_driver", target_os = "windows")))]
-#[cfg(not(target_os = "macos"))]
+#[allow(dead_code, unused)]
 impl KeyEvent {
     pub fn new(code: OsCode, value: KeyValue) -> Self {
         Self { code, value }
+    }
+}
+
+use core::fmt;
+impl fmt::Display for KeyEvent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use kanata_keyberon::key_code::KeyCode;
+        let direction = match self.value {
+            KeyValue::Press => "↓",
+            KeyValue::Release => "↑",
+            KeyValue::Repeat => "⟳",
+            KeyValue::Tap => "↕",
+            KeyValue::WakeUp => "!",
+        };
+        let key_name = KeyCode::from(self.code);
+        write!(f, "{}{:?}", direction, key_name)
     }
 }

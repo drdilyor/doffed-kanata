@@ -1,0 +1,7 @@
+(dofcfg)
+(dofsrc 1)
+(doflayer	(base       	icon base.png   	) 1)
+(doflayer	(1emoji     	🖻 1symbols.png  	) 1)
+(doflayer	(2icon-quote	🖻 "2Nav Num.png"	) 1)
+(doflayer	(3emoji_alt 	🖼 3trans.parent 	) 1)
+(doflayermap	(4layermap 	🖼 3trans.parent 	) 0 0)

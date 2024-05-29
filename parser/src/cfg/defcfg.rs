@@ -1,18 +1,71 @@
-use super::error::*;
 use super::sexpr::SExpr;
 use super::HashSet;
+use super::{error::*, TrimAtomQuotes};
 use crate::cfg::check_first_expr;
 use crate::custom_action::*;
 #[allow(unused)]
 use crate::{anyhow_expr, anyhow_span, bail, bail_expr, bail_span};
 
+#[cfg(all(any(target_os = "windows", target_os = "unknown"), feature = "gui"))]
+#[derive(Debug, Clone)]
+pub struct CfgOptionsGui {
+    /// File name / path to the tray icon file.
+    pub tray_icon: Option<String>,
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    /// Whether to match layer names to icon files without an explicit 'icon' field
+    pub icon_match_layer_name: bool,
+    /// Show tooltip on layer changes showing layer icons
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub tooltip_layer_changes: bool,
+    /// Show tooltip on layer changes for the default/base layer
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub tooltip_no_base: bool,
+    /// Show tooltip on layer changes even for layers without an icon
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub tooltip_show_blank: bool,
+    /// Show tooltip on layer changes for this duration (ms)
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub tooltip_duration: u16,
+    /// Show system notification message on config reload
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub notify_cfg_reload: bool,
+    /// Disable sound for the system notification message on config reload
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub notify_cfg_reload_silent: bool,
+    /// Show system notification message on errors
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub notify_error: bool,
+    /// Set tooltip size (width, height)
+    #[cfg(all(target_os = "windows", feature = "gui"))]
+    pub tooltip_size: (u16, u16),
+}
+#[cfg(all(any(target_os = "windows", target_os = "unknown"), feature = "gui"))]
+impl Default for CfgOptionsGui {
+    fn default() -> Self {
+        Self {
+            tray_icon: None,
+            icon_match_layer_name: true,
+            tooltip_layer_changes: false,
+            tooltip_show_blank: false,
+            tooltip_no_base: true,
+            tooltip_duration: 500,
+            notify_cfg_reload: true,
+            notify_cfg_reload_silent: false,
+            notify_error: true,
+            tooltip_size: (24, 24),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CfgOptions {
     pub process_unmapped_keys: bool,
+    pub block_unmapped_keys: bool,
     pub enable_cmd: bool,
     pub sequence_timeout: u16,
     pub sequence_input_mode: SequenceInputMode,
     pub sequence_backtrack_modcancel: bool,
+    pub sequence_always_on: bool,
     pub log_layer_changes: bool,
     pub delegate_to_first_layer: bool,
     pub movemouse_inherit_accel_state: bool,
@@ -20,6 +73,9 @@ pub struct CfgOptions {
     pub dynamic_macro_max_presses: u16,
     pub dynamic_macro_replay_delay_behaviour: ReplayDelayBehaviour,
     pub concurrent_tap_hold: bool,
+    pub rapid_event_delay: u16,
+    pub trans_resolution_behavior_v2: bool,
+    pub chords_v2_min_idle: u16,
     #[cfg(any(target_os = "linux", target_os = "unknown"))]
     pub linux_dev: Vec<String>,
     #[cfg(any(target_os = "linux", target_os = "unknown"))]
@@ -34,25 +90,36 @@ pub struct CfgOptions {
     pub linux_unicode_termination: UnicodeTermination,
     #[cfg(any(target_os = "linux", target_os = "unknown"))]
     pub linux_x11_repeat_delay_rate: Option<KeyRepeatSettings>,
+    #[cfg(any(target_os = "linux", target_os = "unknown"))]
+    pub linux_use_trackpoint_property: bool,
     #[cfg(any(target_os = "windows", target_os = "unknown"))]
     pub windows_altgr: AltGrBehaviour,
     #[cfg(any(
         all(feature = "interception_driver", target_os = "windows"),
         target_os = "unknown"
     ))]
-    pub windows_interception_mouse_hwid: Option<[u8; HWID_ARR_SZ]>,
+    pub windows_interception_mouse_hwids: Option<Vec<[u8; HWID_ARR_SZ]>>,
+    #[cfg(any(
+        all(feature = "interception_driver", target_os = "windows"),
+        target_os = "unknown"
+    ))]
+    pub windows_interception_keyboard_hwids: Option<Vec<[u8; HWID_ARR_SZ]>>,
     #[cfg(any(target_os = "macos", target_os = "unknown"))]
     pub macos_dev_names_include: Option<Vec<String>>,
+    #[cfg(all(any(target_os = "windows", target_os = "unknown"), feature = "gui"))]
+    pub gui_opts: CfgOptionsGui,
 }
 
 impl Default for CfgOptions {
     fn default() -> Self {
         Self {
             process_unmapped_keys: false,
+            block_unmapped_keys: false,
             enable_cmd: false,
             sequence_timeout: 1000,
             sequence_input_mode: SequenceInputMode::HiddenSuppressed,
             sequence_backtrack_modcancel: true,
+            sequence_always_on: false,
             log_layer_changes: true,
             delegate_to_first_layer: false,
             movemouse_inherit_accel_state: false,
@@ -60,6 +127,9 @@ impl Default for CfgOptions {
             dynamic_macro_max_presses: 128,
             dynamic_macro_replay_delay_behaviour: ReplayDelayBehaviour::Recorded,
             concurrent_tap_hold: false,
+            rapid_event_delay: 5,
+            trans_resolution_behavior_v2: true,
+            chords_v2_min_idle: 5,
             #[cfg(any(target_os = "linux", target_os = "unknown"))]
             linux_dev: vec![],
             #[cfg(any(target_os = "linux", target_os = "unknown"))]
@@ -76,15 +146,24 @@ impl Default for CfgOptions {
             linux_unicode_termination: UnicodeTermination::Enter,
             #[cfg(any(target_os = "linux", target_os = "unknown"))]
             linux_x11_repeat_delay_rate: None,
+            #[cfg(any(target_os = "linux", target_os = "unknown"))]
+            linux_use_trackpoint_property: false,
             #[cfg(any(target_os = "windows", target_os = "unknown"))]
             windows_altgr: AltGrBehaviour::default(),
             #[cfg(any(
                 all(feature = "interception_driver", target_os = "windows"),
                 target_os = "unknown"
             ))]
-            windows_interception_mouse_hwid: None,
+            windows_interception_mouse_hwids: None,
+            #[cfg(any(
+                all(feature = "interception_driver", target_os = "windows"),
+                target_os = "unknown"
+            ))]
+            windows_interception_keyboard_hwids: None,
             #[cfg(any(target_os = "macos", target_os = "unknown"))]
             macos_dev_names_include: None,
+            #[cfg(all(any(target_os = "windows",target_os = "unknown"), feature = "gui"))]
+            gui_opts: Default::default(),
         }
     }
 }
@@ -118,6 +197,9 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                         let v = sexpr_to_str_or_err(val, label)?;
                         cfg.sequence_input_mode = SequenceInputMode::try_from_str(v)
                             .map_err(|e| anyhow_expr!(val, "{}", e.to_string()))?;
+                    }
+                    "sequence-always-on" => {
+                        cfg.sequence_always_on = parse_defcfg_val_bool(val, label)?
                     }
                     "dynamic-macro-max-presses" => {
                         cfg.dynamic_macro_max_presses = parse_cfg_val_u16(val, label, false)?;
@@ -213,6 +295,12 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             });
                         }
                     }
+                    "linux-use-trackpoint-property" => {
+                        #[cfg(any(target_os = "linux", target_os = "unknown"))]
+                        {
+                            cfg.linux_use_trackpoint_property = parse_defcfg_val_bool(val, label)?
+                        }
+                    }
                     "windows-altgr" => {
                         #[cfg(any(target_os = "windows", target_os = "unknown"))]
                         {
@@ -248,17 +336,112 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                                         hwid_bytes.push(b);
                                         hwid_bytes
                                     })
-                                }).map_err(|_| anyhow_expr!(val, "{label} format is invalid. It should consist of integers separated by commas"))?;
+                                }).map_err(|_| anyhow_expr!(val, "{label} format is invalid. It should consist of numbers [0,255] separated by commas"))?;
                             let hwid_slice = hwid_vec.iter().copied().enumerate()
                                 .try_fold([0u8; HWID_ARR_SZ], |mut hwid, idx_byte| {
                                     let (i, b) = idx_byte;
                                     if i > HWID_ARR_SZ {
-                                        bail_expr!(val, "{label} is too long; it should be up to {HWID_ARR_SZ} 8-bit unsigned integers")
+                                        bail_expr!(val, "{label} is too long; it should be up to {HWID_ARR_SZ} numbers [0,255]")
+                                    }
+                                    hwid[i] = b;
+                                    Ok(hwid)
+                            })?;
+                            match cfg.windows_interception_mouse_hwids.as_mut() {
+                                Some(v) => {
+                                    v.push(hwid_slice);
+                                }
+                                None => {
+                                    cfg.windows_interception_mouse_hwids = Some(vec![hwid_slice]);
+                                }
+                            }
+                            cfg.windows_interception_mouse_hwids
+                                .as_mut()
+                                .unwrap()
+                                .shrink_to_fit();
+                        }
+                    }
+                    "windows-interception-mouse-hwids" => {
+                        #[cfg(any(
+                            all(feature = "interception_driver", target_os = "windows"),
+                            target_os = "unknown"
+                        ))]
+                        {
+                            let hwids = sexpr_to_list_or_err(val, label)?;
+                            let mut parsed_hwids = vec![];
+                            for hwid_expr in hwids.iter() {
+                                let hwid = sexpr_to_str_or_err(
+                                    hwid_expr,
+                                    "entry in windows-interception-mouse-hwids",
+                                )?;
+                                log::trace!("win hwid: {hwid}");
+                                let hwid_vec = hwid
+                                .split(',')
+                                .try_fold(vec![], |mut hwid_bytes, hwid_byte| {
+                                    hwid_byte.trim_matches(' ').parse::<u8>().map(|b| {
+                                        hwid_bytes.push(b);
+                                        hwid_bytes
+                                    })
+                                }).map_err(|_| anyhow_expr!(hwid_expr, "Entry in {label} is invalid. Entries should be numbers [0,255] separated by commas"))?;
+                                let hwid_slice = hwid_vec.iter().copied().enumerate()
+                                .try_fold([0u8; HWID_ARR_SZ], |mut hwid, idx_byte| {
+                                    let (i, b) = idx_byte;
+                                    if i > HWID_ARR_SZ {
+                                        bail_expr!(hwid_expr, "entry in {label} is too long; it should be up to {HWID_ARR_SZ} 8-bit unsigned integers")
                                     }
                                     hwid[i] = b;
                                     Ok(hwid)
                             });
-                            cfg.windows_interception_mouse_hwid = Some(hwid_slice?);
+                                parsed_hwids.push(hwid_slice?);
+                            }
+                            match cfg.windows_interception_mouse_hwids.as_mut() {
+                                Some(v) => {
+                                    v.extend(parsed_hwids);
+                                }
+                                None => {
+                                    cfg.windows_interception_mouse_hwids = Some(parsed_hwids);
+                                }
+                            }
+                            cfg.windows_interception_mouse_hwids
+                                .as_mut()
+                                .unwrap()
+                                .shrink_to_fit();
+                        }
+                    }
+                    "windows-interception-keyboard-hwids" => {
+                        #[cfg(any(
+                            all(feature = "interception_driver", target_os = "windows"),
+                            target_os = "unknown"
+                        ))]
+                        {
+                            let hwids = sexpr_to_list_or_err(val, label)?;
+                            let mut parsed_hwids = vec![];
+                            for hwid_expr in hwids.iter() {
+                                let hwid = sexpr_to_str_or_err(
+                                    hwid_expr,
+                                    "entry in windows-interception-keyboard-hwids",
+                                )?;
+                                log::trace!("win hwid: {hwid}");
+                                let hwid_vec = hwid
+                                    .split(',')
+                                    .try_fold(vec![], |mut hwid_bytes, hwid_byte| {
+                                        hwid_byte.trim_matches(' ').parse::<u8>().map(|b| {
+                                            hwid_bytes.push(b);
+                                            hwid_bytes
+                                        })
+                                    }).map_err(|_| anyhow_expr!(hwid_expr, "Entry in {label} is invalid. Entries should be numbers [0,255] separated by commas"))?;
+                                let hwid_slice = hwid_vec.iter().copied().enumerate()
+                                    .try_fold([0u8; HWID_ARR_SZ], |mut hwid, idx_byte| {
+                                        let (i, b) = idx_byte;
+                                        if i > HWID_ARR_SZ {
+                                            bail_expr!(hwid_expr, "entry in {label} is too long; it should be up to {HWID_ARR_SZ} 8-bit unsigned integers")
+                                        }
+                                        hwid[i] = b;
+                                        Ok(hwid)
+                                });
+                                parsed_hwids.push(hwid_slice?);
+                            }
+                            parsed_hwids.shrink_to_fit();
+                            cfg.windows_interception_keyboard_hwids = Some(parsed_hwids);
                         }
                     }
                     "macos-dev-names-include" => {
@@ -271,9 +454,122 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             cfg.macos_dev_names_include = Some(dev_names);
                         }
                     }
+                    "tray-icon" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            let icon_path = sexpr_to_str_or_err(val, label)?;
+                            if icon_path.is_empty() {
+                                log::warn!("tray-icon is empty");
+                            }
+                            cfg.gui_opts.tray_icon = Some(icon_path.to_string());
+                        }
+                    }
+                    "icon-match-layer-name" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.icon_match_layer_name = parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "tooltip-layer-changes" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.tooltip_layer_changes = parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "tooltip-show-blank" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.tooltip_show_blank = parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "tooltip-no-base" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.tooltip_no_base = parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "tooltip-duration" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.tooltip_duration = parse_cfg_val_u16(val, label, false)?
+                        }
+                    }
+                    "notify-cfg-reload" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.notify_cfg_reload = parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "notify-cfg-reload-silent" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.notify_cfg_reload_silent =
+                                parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "notify-error" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            cfg.gui_opts.notify_error = parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "tooltip-size" => {
+                        #[cfg(all(
+                            any(target_os = "windows", target_os = "unknown"),
+                            feature = "gui"
+                        ))]
+                        {
+                            let v = sexpr_to_str_or_err(val, label)?;
+                            let tooltip_size = v.split(',').collect::<Vec<_>>();
+                            const ERRMSG: &str = "Invalid value for tooltip-size.\nExpected two numbers 0-65535 separated by a comma, e.g. 24,24";
+                            if tooltip_size.len() != 2 {
+                                bail_expr!(val, "{}", ERRMSG)
+                            }
+                            cfg.gui_opts.tooltip_size = (
+                                match str::parse::<u16>(tooltip_size[0]) {
+                                    Ok(w) => w,
+                                    Err(_) => bail_expr!(val, "{}", ERRMSG),
+                                },
+                                match str::parse::<u16>(tooltip_size[1]) {
+                                    Ok(h) => h,
+                                    Err(_) => bail_expr!(val, "{}", ERRMSG),
+                                },
+                            );
+                        }
+                    }
 
                     "process-unmapped-keys" => {
                         cfg.process_unmapped_keys = parse_defcfg_val_bool(val, label)?
+                    }
+                    "block-unmapped-keys" => {
+                        cfg.block_unmapped_keys = parse_defcfg_val_bool(val, label)?
                     }
                     "danger-enable-cmd" => cfg.enable_cmd = parse_defcfg_val_bool(val, label)?,
                     "sequence-backtrack-modcancel" => {
@@ -303,6 +599,28 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                     "concurrent-tap-hold" => {
                         cfg.concurrent_tap_hold = parse_defcfg_val_bool(val, label)?
                     }
+                    "rapid-event-delay" => {
+                        cfg.rapid_event_delay = parse_cfg_val_u16(val, label, false)?
+                    }
+                    "transparent-key-resolution" => {
+                        let v = sexpr_to_str_or_err(val, label)?;
+                        cfg.trans_resolution_behavior_v2 = match v {
+                            "to-base-layer" => false,
+                            "layer-stack" => true,
+                            _ => bail_expr!(
+                                val,
+                                "{label} got {}. It accepts: 'to-base-layer' or 'layer-stack'",
+                                v
+                            ),
+                        };
+                    }
+                    "chords-v2-min-idle-experimental" => {
+                        let min_idle = parse_cfg_val_u16(val, label, true)?;
+                        if min_idle < 5 {
+                            bail_expr!(val, "{label} must be 5-65535");
+                        }
+                        cfg.chords_v2_min_idle = min_idle;
+                    }
                     _ => bail_expr!(key, "Unknown dofcfg option {}", label),
                 };
             }
@@ -320,7 +638,7 @@ pub const BOOLEAN_VALUES: [&str; 6] = ["yes", "true", "1", "no", "false", "0"];
 fn parse_defcfg_val_bool(expr: &SExpr, label: &str) -> Result<bool> {
     match &expr {
         SExpr::Atom(v) => {
-            let val = v.t.trim_matches('"').to_ascii_lowercase();
+            let val = v.t.trim_atom_quotes().to_ascii_lowercase();
             if TRUE_VALUES.contains(&val.as_str()) {
                 Ok(true)
             } else if FALSE_VALUES.contains(&val.as_str()) {
@@ -346,7 +664,7 @@ fn parse_defcfg_val_bool(expr: &SExpr, label: &str) -> Result<bool> {
 fn parse_cfg_val_u16(expr: &SExpr, label: &str, exclude_zero: bool) -> Result<u16> {
     let start = if exclude_zero { 1 } else { 0 };
     match &expr {
-        SExpr::Atom(v) => Ok(str::parse::<u16>(v.t.trim_matches('"'))
+        SExpr::Atom(v) => Ok(str::parse::<u16>(v.t.trim_atom_quotes())
             .ok()
             .and_then(|u| {
                 if exclude_zero && u == 0 {
@@ -388,7 +706,7 @@ pub fn parse_colon_separated_text(paths: &str) -> Vec<String> {
 pub fn parse_dev(val: &SExpr) -> Result<Vec<String>> {
     Ok(match val {
         SExpr::Atom(a) => {
-            let devs = parse_colon_separated_text(a.t.trim_matches('"'));
+            let devs = parse_colon_separated_text(a.t.trim_atom_quotes());
             if devs.len() == 1 && devs[0].is_empty() {
                 bail_expr!(val, "an empty string is not a valid device name or path")
             }
@@ -399,7 +717,7 @@ pub fn parse_dev(val: &SExpr) -> Result<Vec<String>> {
                 l.t.iter()
                     .try_fold(Vec::with_capacity(l.t.len()), |mut acc, expr| match expr {
                         SExpr::Atom(path) => {
-                            let trimmed_path = path.t.trim_matches('"').to_string();
+                            let trimmed_path = path.t.trim_atom_quotes().to_string();
                             if trimmed_path.is_empty() {
                                 bail_span!(
                                     path,
@@ -421,8 +739,19 @@ pub fn parse_dev(val: &SExpr) -> Result<Vec<String>> {
 
 fn sexpr_to_str_or_err<'a>(expr: &'a SExpr, label: &str) -> Result<&'a str> {
     match expr {
-        SExpr::Atom(a) => Ok(a.t.trim_matches('"')),
+        SExpr::Atom(a) => Ok(a.t.trim_atom_quotes()),
         SExpr::List(_) => bail_expr!(expr, "The value for {label} can't be a list"),
+    }
+}
+
+#[cfg(any(
+    all(feature = "interception_driver", target_os = "windows"),
+    target_os = "unknown"
+))]
+fn sexpr_to_list_or_err<'a>(expr: &'a SExpr, label: &str) -> Result<&'a [SExpr]> {
+    match expr {
+        SExpr::Atom(_) => bail_expr!(expr, "The value for {label} must be a list"),
+        SExpr::List(l) => Ok(&l.t),
     }
 }
 
@@ -461,7 +790,7 @@ impl Default for AltGrBehaviour {
     all(feature = "interception_driver", target_os = "windows"),
     target_os = "unknown"
 ))]
-pub const HWID_ARR_SZ: usize = 128;
+pub const HWID_ARR_SZ: usize = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplayDelayBehaviour {

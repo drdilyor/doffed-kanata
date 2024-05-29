@@ -3,9 +3,34 @@ use super::*;
 use crate::cfg::sexpr::{parse, Span};
 use kanata_keyberon::action::BooleanOperator::*;
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+
+mod ambiguous;
+mod environment;
 
 static CFG_PARSE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock<T>(lk: &Mutex<T>) -> MutexGuard<T> {
+    match lk.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn parse_cfg(cfg: &str) -> Result<IntermediateCfg> {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
+    parse_cfg_raw_string(
+        cfg,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
+    )
+}
 
 #[test]
 fn sizeof_action_is_two_usizes() {
@@ -31,11 +56,8 @@ fn test_span_absolute_ranges() {
 
 #[test]
 fn span_works_with_unicode_characters() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"(dofsrc a) ;; 😊
 (doflayer base @😊)
 "#;
@@ -47,6 +69,7 @@ fn span_works_with_unicode_characters() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .expect_err("should be an error because @😊 is not defined")
     .span
@@ -65,11 +88,8 @@ fn span_works_with_unicode_characters() {
 
 #[test]
 fn test_multiline_error_span() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"(dofsrc a)
 (
   🍍
@@ -85,6 +105,7 @@ fn test_multiline_error_span() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .expect_err("should error on unknown top level block")
     .span
@@ -101,11 +122,8 @@ fn test_multiline_error_span() {
 
 #[test]
 fn test_span_of_an_unterminated_block_comment_error() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"(dofsrc a) |# I'm an unterminated block comment..."#;
     let span = parse_cfg_raw_string(
         source,
@@ -115,6 +133,7 @@ fn test_span_of_an_unterminated_block_comment_error() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .expect_err("should be an unterminated comment error")
     .span
@@ -131,12 +150,13 @@ fn test_span_of_an_unterminated_block_comment_error() {
 
 #[test]
 fn parse_action_vars() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
     let source = r#"
+(defvirtualkeys
+  ctl lctl
+  sft lsft
+  met lmet
+  alt lalt
+)
 (dofvar
   one 1
   two 2
@@ -164,25 +184,62 @@ fn parse_action_vars() {
   rlk (release-key $one)
   mul (multi $two $one)
   mwu (mwheel-up $one $two)
+  mwua (🖱☸↑ $one $two)
+  mwda (🖱☸↓ $one $two)
+  mwla (🖱☸← $one $two)
+  mwra (🖱☸→ $one $two)
+  mmua (🖱↑ $one $two)
+  mmda (🖱↓ $one $two)
+  mmla (🖱← $one $two)
+  mmra (🖱→ $one $two)
   mmu (movemouse-up $one $two)
   mau (movemouse-accel-up $one $two $one $two)
+  maua (🖱accel↑ $one $two $one $two)
+  mada (🖱accel↓ $one $two $one $two)
+  mala (🖱accel← $one $two $one $two)
+  mara (🖱accel→ $one $two $one $two)
   ons (one-shot $one $two)
   thd (tap-hold $one $two $chr $two)
   tht (tap-hold-release-timeout $one $two $chr $two $one)
   thk (tap-hold-release-keys $one $two $chr $two $three)
   the (tap-hold-except-keys $one $two $chr $two $three)
+  thta (tap⬓↑timeout $one $two $chr $two $one)
+  thka (tap⬓↑keys $one $two $chr $two $three)
+  thea (tap⬓⤫keys $one $two $chr $two $three)
   mac (macro $one $two $one $two $chr C-S-$three $one)
   rmc (macro-repeat $one $two $one $two $chr C-S-$three $one)
+  mrca (macro↑⤫ $one 500 bspc S-1 500 bspc S-2)
+  mrra (macro⟳↑⤫ mltp)
+  oat (tap⬓↓timeout   200 200 o $one bspc)
+  fsta (🖱speed 200)
+  psfa (on↓ press-virtualkey   sft)
+  rsfa (on↑ release-virtualkey sft)
+  os2a (one-shot↓ 2000 lsft)
+  os3a (one-shot↑ 2000 lctl)
+  os4a (one-shot↓⤫ 2000 lalt)
+  os5a (one-shot↑⤫ 2000 lmet)
+  oara (tap⬓↓ 200 200 o $two)
+  echa (tap⬓↑ 200 200 e $two)
+  rmca (macro⟳ $one $two $one $two $chr C-S-$three $one)
   dr1 (dynamic-macro-record $one)
   dp1 (dynamic-macro-play $one)
   abc (arbitrary-code $one)
   opf (on-press-fakekey $one $rel)
   orf (on-release-fakekey $one $rel)
+  opfa (on↓fakekey $one $rel)
+  orfa (on↑fakekey $one $rel)
+  opfda (on↓fakekey-delay 200)
+  orfda (on↑fakekey-delay 200)
+  relka (key↑ $one)
+  rella (layer↑ base)
   fla $full-action
   frk (fork $one $two $five)
   cpw (caps-word-custom $one $three $four)
+  cwa (word⇪ 2000)
+  cpwa (word⇪custom $one $three $four)
   rst (dynamic-macro-record-stop-truncate $one)
   stm (setmouse $one $two)
+  stma (set🖱 $one $two)
 )
 (dofsrc a b c d)
 (doflayer base $chord1 $chord2 $chr @tdl)
@@ -199,158 +256,14 @@ fn parse_action_vars() {
 (dofchords $e $one $1 $two)
 (dofchords $e2 $one ($one) $two)
 "#;
-    parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .unwrap();
-}
-
-#[test]
-fn parse_delegate_to_default_layer_yes() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
-    let source = r#"
-(dofcfg delegate-to-first-layer yes)
-(dofsrc a)
-(doflayer base b)
-(doflayer other _)
-"#;
-    let res = parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .unwrap();
-    assert_eq!(
-        res.3[2][0][OsCode::KEY_A.as_u16() as usize],
-        Action::KeyCode(KeyCode::B),
-    );
-}
-
-#[test]
-fn parse_delegate_to_default_layer_yes_but_base_transparent() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
-    let source = r#"
-(dofcfg delegate-to-first-layer yes)
-(dofsrc a)
-(doflayer base _)
-(doflayer other _)
-"#;
-    let res = parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .unwrap();
-    assert_eq!(
-        res.3[2][0][OsCode::KEY_A.as_u16() as usize],
-        Action::KeyCode(KeyCode::A),
-    );
-}
-
-#[test]
-fn parse_delegate_to_default_layer_no() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
-    let source = r#"
-(dofcfg delegate-to-first-layer no)
-(dofsrc a)
-(doflayer base b)
-(doflayer other _)
-"#;
-    let res = parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .unwrap();
-    assert_eq!(
-        res.3[2][0][OsCode::KEY_A.as_u16() as usize],
-        Action::KeyCode(KeyCode::A),
-    );
-}
-
-#[test]
-fn parse_transparent_default() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
-    let (_, _, layer_strings, layers, _, _) = parse_cfg_raw(
-        &std::path::PathBuf::from("./test_cfgs/transparent_default.kbd"),
-        &mut s,
-    )
-    .unwrap();
-
-    assert_eq!(layer_strings.len(), 4);
-
-    assert_eq!(
-        layers[0][0][usize::from(OsCode::KEY_F13)],
-        Action::KeyCode(KeyCode::F13)
-    );
-    assert_eq!(
-        layers[0][0][usize::from(OsCode::KEY_F14)],
-        Action::DefaultLayer(2)
-    );
-    assert_eq!(layers[0][0][usize::from(OsCode::KEY_F15)], Action::Layer(3));
-    assert_eq!(layers[1][0][usize::from(OsCode::KEY_F13)], Action::Trans);
-    assert_eq!(
-        layers[1][0][usize::from(OsCode::KEY_F14)],
-        Action::DefaultLayer(2)
-    );
-    assert_eq!(layers[1][0][usize::from(OsCode::KEY_F15)], Action::Layer(3));
-    assert_eq!(
-        layers[2][0][usize::from(OsCode::KEY_F13)],
-        Action::DefaultLayer(0)
-    );
-    assert_eq!(layers[2][0][usize::from(OsCode::KEY_F14)], Action::Layer(1));
-    assert_eq!(
-        layers[2][0][usize::from(OsCode::KEY_F15)],
-        Action::KeyCode(KeyCode::F15)
-    );
-    assert_eq!(
-        layers[3][0][usize::from(OsCode::KEY_F13)],
-        Action::DefaultLayer(0)
-    );
-    assert_eq!(layers[3][0][usize::from(OsCode::KEY_F14)], Action::Layer(1));
-    assert_eq!(layers[3][0][usize::from(OsCode::KEY_F15)], Action::Trans);
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
 }
 
 #[test]
 fn parse_multiline_comment() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     new_from_file(&std::path::PathBuf::from(
         "./test_cfgs/multiline_comment.kbd",
     ))
@@ -358,11 +271,14 @@ fn parse_multiline_comment() {
 }
 
 #[test]
+fn parse_file_with_utf8_bom() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    new_from_file(&std::path::PathBuf::from("./test_cfgs/utf8bom.kbd")).unwrap();
+}
+
+#[test]
 fn disallow_nested_tap_hold() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     match new_from_file(&std::path::PathBuf::from("./test_cfgs/nested_tap_hold.kbd"))
         .map_err(|e| format!("{}", e.help().unwrap()))
     {
@@ -373,10 +289,7 @@ fn disallow_nested_tap_hold() {
 
 #[test]
 fn disallow_ancestor_seq() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     match new_from_file(&std::path::PathBuf::from("./test_cfgs/ancestor_seq.kbd"))
         .map_err(|e| format!("{e:?}"))
     {
@@ -387,10 +300,7 @@ fn disallow_ancestor_seq() {
 
 #[test]
 fn disallow_descendent_seq() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     match new_from_file(&std::path::PathBuf::from("./test_cfgs/descendant_seq.kbd"))
         .map_err(|e| format!("{e:?}"))
     {
@@ -401,10 +311,7 @@ fn disallow_descendent_seq() {
 
 #[test]
 fn disallow_multiple_waiting_actions() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     match new_from_file(&std::path::PathBuf::from("./test_cfgs/bad_multi.kbd"))
         .map_err(|e| format!("{}", e.help().unwrap()))
     {
@@ -415,10 +322,7 @@ fn disallow_multiple_waiting_actions() {
 
 #[test]
 fn chord_in_macro_dont_panic() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     new_from_file(&std::path::PathBuf::from(
         "./test_cfgs/macro-chord-dont-panic.kbd",
     ))
@@ -428,10 +332,7 @@ fn chord_in_macro_dont_panic() {
 
 #[test]
 fn unknown_defcfg_item_fails() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     new_from_file(&std::path::PathBuf::from(
         "./test_cfgs/unknown_defcfg_opt.kbd",
     ))
@@ -462,7 +363,7 @@ fn recursive_multi_is_flattened() {
             list!([atom!("multi"), atom!("c"), atom!("mrtp"),])
         ]),
     ];
-    let s = ParsedState::default();
+    let s = ParserState::default();
     if let KanataAction::MultipleActions(parsed_multi) = parse_multi(&params, &s).unwrap() {
         assert_eq!(parsed_multi.len(), 4);
         assert_eq!(parsed_multi[0], Action::KeyCode(KeyCode::A));
@@ -487,7 +388,7 @@ fn recursive_multi_is_flattened() {
 fn test_parse_sequence_a_b() {
     let seq = parse_sequence_keys(
         &parse("(a b)", "test").expect("parses")[0].t,
-        &ParsedState::default(),
+        &ParserState::default(),
     )
     .expect("parses");
     assert_eq!(seq.len(), 2);
@@ -499,7 +400,7 @@ fn test_parse_sequence_a_b() {
 fn test_parse_sequence_sa_b() {
     let seq = parse_sequence_keys(
         &parse("(S-a b)", "test").expect("parses")[0].t,
-        &ParsedState::default(),
+        &ParserState::default(),
     )
     .expect("parses");
     assert_eq!(seq.len(), 3);
@@ -512,7 +413,7 @@ fn test_parse_sequence_sa_b() {
 fn test_parse_sequence_sab() {
     let seq = parse_sequence_keys(
         &parse("(S-(a b))", "test").expect("parses")[0].t,
-        &ParsedState::default(),
+        &ParserState::default(),
     )
     .expect("parses");
     assert_eq!(seq.len(), 3);
@@ -525,7 +426,7 @@ fn test_parse_sequence_sab() {
 fn test_parse_sequence_bigchord() {
     let seq = parse_sequence_keys(
         &parse("(AG-A-M-C-S-(a b) c)", "test").expect("parses")[0].t,
-        &ParsedState::default(),
+        &ParserState::default(),
     )
     .expect("parses");
     assert_eq!(seq.len(), 8);
@@ -543,7 +444,7 @@ fn test_parse_sequence_bigchord() {
 fn test_parse_sequence_inner_chord() {
     let seq = parse_sequence_keys(
         &parse("(S-(a b C-c) d)", "test").expect("parses")[0].t,
-        &ParsedState::default(),
+        &ParserState::default(),
     )
     .expect("parses");
     assert_eq!(seq.len(), 6);
@@ -559,7 +460,7 @@ fn test_parse_sequence_inner_chord() {
 fn test_parse_sequence_earlier_inner_chord() {
     let seq = parse_sequence_keys(
         &parse("(S-(a C-b c) d)", "test").expect("parses")[0].t,
-        &ParsedState::default(),
+        &ParserState::default(),
     )
     .expect("parses");
     assert_eq!(seq.len(), 6);
@@ -575,7 +476,7 @@ fn test_parse_sequence_earlier_inner_chord() {
 fn test_parse_sequence_numbers() {
     let seq = parse_sequence_keys(
         &parse("(0 1 2 3 4 5 6 7 8 9)", "test").expect("parses")[0].t,
-        &ParsedState::default(),
+        &ParserState::default(),
     )
     .expect("parses");
     assert_eq!(seq.len(), 10);
@@ -601,7 +502,7 @@ fn test_parse_macro_numbers() {
     let mut i = 1;
     while !expr_rem.is_empty() {
         let (macro_events, expr_rem_tmp) =
-            parse_macro_item(expr_rem, &ParsedState::default()).expect("parses");
+            parse_macro_item(expr_rem, &ParserState::default()).expect("parses");
         expr_rem = expr_rem_tmp;
         assert_eq!(macro_events.len(), 1);
         match &macro_events[0] {
@@ -612,24 +513,18 @@ fn test_parse_macro_numbers() {
     }
 
     let exprs = parse("(0)", "test").expect("parses")[0].t.clone();
-    parse_macro_item(exprs.as_slice(), &ParsedState::default()).expect_err("errors");
+    parse_macro_item(exprs.as_slice(), &ParserState::default()).expect_err("errors");
 }
 
 #[test]
 fn test_include_good() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     new_from_file(&std::path::PathBuf::from("./test_cfgs/include-good.kbd")).unwrap();
 }
 
 #[test]
 fn test_include_bad_has_filename_included() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     let err = format!(
         "{:?}",
         new_from_file(
@@ -649,10 +544,7 @@ fn test_include_bad_has_filename_included() {
 
 #[test]
 fn test_include_bad2_has_original_filename() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let _lk = lock(&CFG_PARSE_LOCK);
     let err = format!(
         "{:?}",
         new_from_file(
@@ -676,11 +568,8 @@ fn test_include_bad2_has_original_filename() {
 #[test]
 fn parse_bad_submacro() {
     // Test exists since it used to crash. It should not crash.
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofsrc a)
 (doflayer base
@@ -695,6 +584,7 @@ fn parse_bad_submacro() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -707,11 +597,8 @@ fn parse_bad_submacro() {
 #[test]
 fn parse_bad_submacro_2() {
     // Test exists since it used to crash. It should not crash.
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofsrc a)
 (doflayer base
@@ -726,6 +613,7 @@ fn parse_bad_submacro_2() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -737,12 +625,6 @@ fn parse_bad_submacro_2() {
 
 #[test]
 fn parse_nested_macro() {
-    // Test exists since it used to crash. It should not crash.
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
     let source = r#"
 (dofvar m1 (a b c))
 (dofsrc a b)
@@ -751,39 +633,38 @@ fn parse_nested_macro() {
   (macro bspc bspc $m1)
 )
 "#;
-    parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .map_err(|e| {
-        eprintln!("{:?}", miette::Error::from(e));
-        ""
-    })
-    .unwrap();
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
 }
 
 #[test]
 fn parse_switch() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofvar var1 a)
 (dofsrc a)
+(doffakekeys vk1 XX)
+(defvirtualkeys vk2 XX)
 (doflayer base
   (switch
     ((and a b (or c d) (or e f))) XX break
+    ((not (and a b (not (or c (not d))) (or e f)))) XX break
     () _ fallthrough
     (a b c) $var1 fallthrough
     ((or (or (or (or (or (or (or (or))))))))) $var1 fallthrough
     ((key-history a 1) (key-history b 5) (key-history c 8)) $var1 fallthrough
+    ((not
+      (key-timing 1 less-than 200)
+      (key-timing 4 greater-than 500)
+      (key-timing 7 lt 1000)
+      (key-timing 8 gt 20000)
+    )) $var1 fallthrough
+    ((input virtual vk1)) $var1 break
+    ((input real lctl)) $var1 break
+    ((input-history virtual vk2 1)) $var1 break
+    ((input-history real lsft 8)) $var1 break
   )
 )
 "#;
@@ -795,10 +676,17 @@ fn parse_switch() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .unwrap();
+    let (op1, op2) = OpCode::new_active_input((FAKE_KEY_ROW, 0));
+    let (op3, op4) = OpCode::new_active_input((NORMAL_KEY_ROW, u16::from(OsCode::KEY_LEFTCTRL)));
+    let (op5, op6) = OpCode::new_historical_input((FAKE_KEY_ROW, 1), 0);
+    let (op7, op8) =
+        OpCode::new_historical_input((NORMAL_KEY_ROW, u16::from(OsCode::KEY_LEFTSHIFT)), 7);
+    let (klayers, _) = res.klayers.get();
     assert_eq!(
-        res.3[0][0][OsCode::KEY_A.as_u16() as usize],
+        klayers[0][0][OsCode::KEY_A.as_u16() as usize],
         Action::Switch(&Switch {
             cases: &[
                 (
@@ -810,6 +698,24 @@ fn parse_switch() {
                         OpCode::new_key(KeyCode::C),
                         OpCode::new_key(KeyCode::D),
                         OpCode::new_bool(Or, 9),
+                        OpCode::new_key(KeyCode::E),
+                        OpCode::new_key(KeyCode::F),
+                    ],
+                    &Action::NoOp,
+                    BreakOrFallthrough::Break
+                ),
+                (
+                    &[
+                        OpCode::new_bool(Not, 12),
+                        OpCode::new_bool(And, 12),
+                        OpCode::new_key(KeyCode::A),
+                        OpCode::new_key(KeyCode::B),
+                        OpCode::new_bool(Not, 9),
+                        OpCode::new_bool(Or, 9),
+                        OpCode::new_key(KeyCode::C),
+                        OpCode::new_bool(Not, 9),
+                        OpCode::new_key(KeyCode::D),
+                        OpCode::new_bool(Or, 12),
                         OpCode::new_key(KeyCode::E),
                         OpCode::new_key(KeyCode::F),
                     ],
@@ -849,6 +755,37 @@ fn parse_switch() {
                     &Action::KeyCode(KeyCode::A),
                     BreakOrFallthrough::Fallthrough
                 ),
+                (
+                    &[
+                        OpCode::new_bool(Not, 5),
+                        OpCode::new_ticks_since_lt(0, 200),
+                        OpCode::new_ticks_since_gt(3, 500),
+                        OpCode::new_ticks_since_lt(6, 1000),
+                        OpCode::new_ticks_since_gt(7, 20000),
+                    ],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Fallthrough
+                ),
+                (
+                    &[op1, op2],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Break
+                ),
+                (
+                    &[op3, op4],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Break
+                ),
+                (
+                    &[op5, op6],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Break
+                ),
+                (
+                    &[op7, op8],
+                    &Action::KeyCode(KeyCode::A),
+                    BreakOrFallthrough::Break
+                ),
             ]
         })
     );
@@ -856,11 +793,8 @@ fn parse_switch() {
 
 #[test]
 fn parse_switch_exceed_depth() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofsrc a)
 (doflayer base
@@ -877,6 +811,7 @@ fn parse_switch_exceed_depth() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -887,18 +822,31 @@ fn parse_switch_exceed_depth() {
 }
 
 #[test]
-fn parse_on_idle_fakekey() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+fn parse_virtualkeys() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofvar var1 a)
-(dofsrc a)
+(dofsrc a b c d e f g h i j k l m n o p)
 (doffakekeys hello a)
+(defvirtualkeys bye a)
 (doflayer base
-  (on-idle-fakekey hello tap 200)
+  (on-press   press-virtualkey hello)
+  (on-press release-virtualkey hello)
+  (on-press  toggle-virtualkey hello)
+  (on-press     tap-virtualkey hello)
+  (on-press   press-vkey bye)
+  (on-press release-vkey bye)
+  (on-press  toggle-vkey bye)
+  (on-press     tap-vkey bye)
+  (on-release   press-virtualkey hello)
+  (on-release release-virtualkey hello)
+  (on-release  toggle-virtualkey hello)
+  (on-release     tap-virtualkey hello)
+  (on-release   press-vkey bye)
+  (on-release release-vkey bye)
+  (on-release  toggle-vkey bye)
+  (on-release     tap-vkey bye)
 )
 "#;
     let res = parse_cfg_raw_string(
@@ -909,14 +857,81 @@ fn parse_on_idle_fakekey() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
-    .map_err(|_e| {
-        eprintln!("{:?}", _e);
+    .map_err(|e| {
+        eprintln!("{:?}", miette::Error::from(e));
         ""
     })
     .unwrap();
+    let (klayers, _) = res.klayers.get();
     assert_eq!(
-        res.3[0][0][OsCode::KEY_A.as_u16() as usize],
+        klayers[0][0][OsCode::KEY_A.as_u16() as usize],
+        Action::Custom(
+            &[&CustomAction::FakeKey {
+                coord: Coord { x: 1, y: 0 },
+                action: FakeKeyAction::Press,
+            }]
+            .as_ref()
+        ),
+    );
+    assert_eq!(
+        klayers[0][0][OsCode::KEY_F.as_u16() as usize],
+        Action::Custom(
+            &[&CustomAction::FakeKey {
+                coord: Coord { x: 1, y: 1 },
+                action: FakeKeyAction::Release,
+            }]
+            .as_ref()
+        ),
+    );
+    assert_eq!(
+        klayers[0][0][OsCode::KEY_K.as_u16() as usize],
+        Action::Custom(
+            &[&CustomAction::FakeKeyOnRelease {
+                coord: Coord { x: 1, y: 0 },
+                action: FakeKeyAction::Toggle,
+            }]
+            .as_ref()
+        ),
+    );
+    assert_eq!(
+        klayers[0][0][OsCode::KEY_P.as_u16() as usize],
+        Action::Custom(
+            &[&CustomAction::FakeKeyOnRelease {
+                coord: Coord { x: 1, y: 1 },
+                action: FakeKeyAction::Tap,
+            }]
+            .as_ref()
+        ),
+    );
+}
+
+#[test]
+fn parse_on_idle_fakekey() {
+    let source = r#"
+(dofvar var1 a)
+(dofsrc a b c d e f g h i)
+(doffakekeys hello a)
+(defvirtualkeys bye a)
+(doflayer base
+  (on-idle-fakekey hello tap 200)
+  (on-idle 100   press-virtualkey hello)
+  (on-idle 100 release-virtualkey hello)
+  (on-idle 100  toggle-virtualkey hello)
+  (on-idle 100     tap-virtualkey hello)
+  (on-idle 100   press-vkey bye)
+  (on-idle 100 release-vkey bye)
+  (on-idle 100  toggle-vkey bye)
+  (on-idle 200     tap-vkey bye)
+)
+"#;
+    let res = parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+    let (klayers, _) = res.klayers.get();
+    assert_eq!(
+        klayers[0][0][OsCode::KEY_A.as_u16() as usize],
         Action::Custom(
             &[&CustomAction::FakeKeyOnIdle(FakeKeyOnIdle {
                 coord: Coord { x: 1, y: 0 },
@@ -930,11 +945,8 @@ fn parse_on_idle_fakekey() {
 
 #[test]
 fn parse_on_idle_fakekey_errors() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofvar var1 a)
 (dofsrc a)
@@ -951,6 +963,7 @@ fn parse_on_idle_fakekey_errors() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|_e| {
         // comment out to see what this looks like when running test
@@ -975,6 +988,7 @@ fn parse_on_idle_fakekey_errors() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -999,6 +1013,7 @@ fn parse_on_idle_fakekey_errors() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -1023,6 +1038,7 @@ fn parse_on_idle_fakekey_errors() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|_e| {
         // uncomment to see what this looks like when running test
@@ -1034,7 +1050,7 @@ fn parse_on_idle_fakekey_errors() {
 
 #[test]
 fn parse_fake_keys_errors_on_too_many() {
-    let mut s = ParsedState::default();
+    let mut s = ParserState::default();
     let mut checked_for_err = false;
     for n in 0..1000 {
         let exprs = [&vec![
@@ -1068,12 +1084,27 @@ fn parse_fake_keys_errors_on_too_many() {
 
 #[test]
 fn parse_deflocalkeys_overridden() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
     let source = r#"
 (doflocalkeys-win
++   300
+[   301
+]   302
+{   303
+}   304
+/   305
+;   306
+`   307
+=   308
+-   309
+'   310
+,   311
+.   312
+\   313
+yen 314
+¥   315
+new 316
+)
+(doflocalkeys-winiov2
 +   300
 [   301
 ]   302
@@ -1152,49 +1183,26 @@ new 316
 (dofsrc + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥ new)
 (doflayer base + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥ new)
 "#;
-    let mut s = ParsedState::default();
-    parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .expect("succeeds");
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
 }
 
 #[test]
 fn use_default_overridable_mappings() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
     let source = r#"
 (dofsrc + [  ]  a  b  /  ;  `  =  -  '  ,  .  9  yen ¥  )
 (doflayer base + [  ]  {  }  /  ;  `  =  -  '  ,  .  \  yen ¥  )
 "#;
-    let mut s = ParsedState::default();
-    parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .expect("succeeds");
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
 }
 
 #[test]
 fn list_action_not_in_list_error_message_is_good() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofsrc a)
 (dofalias hello
@@ -1210,6 +1218,7 @@ fn list_action_not_in_list_error_message_is_good() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .map_err(|e| {
         assert_eq!(
@@ -1301,10 +1310,6 @@ fn test_parse_dev() {
 
 #[test]
 fn parse_all_defcfg() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
     let source = r#"
 (dofcfg
   process-unmapped-keys yes
@@ -1318,6 +1323,7 @@ fn parse_all_defcfg() {
   movemouse-smooth-diagonals yes
   dynamic-macro-max-presses 1000
   concurrent-tap-hold yes
+  rapid-event-delay 5
   linux-dev /dev/input/dev1:/dev/input/dev2
   linux-dev-names-include "Name 1:Name 2"
   linux-dev-names-exclude "Name 3:Name 4"
@@ -1325,61 +1331,50 @@ fn parse_all_defcfg() {
   linux-unicode-u-code v
   linux-unicode-termination space
   linux-x11-repeat-delay-rate 400,50
+  tray-icon symbols.ico
+  icon-match-layer-name no
+  tooltip-layer-changes yes
+  tooltip-show-blank yes
+  tooltip-no-base yes
+  tooltip-duration 300
+  tooltip-size 24,24
+  notify-cfg-reload yes
+  notify-cfg-reload-silent no
+  notify-error yes
   windows-altgr add-lctl-release
   windows-interception-mouse-hwid "70, 0, 60, 0"
+  windows-interception-mouse-hwids ("0, 0, 0" "1, 1, 1")
+  windows-interception-keyboard-hwids ("0, 0, 0" "1, 1, 1")
 )
 (dofsrc a)
 (doflayer base a)
 "#;
-    let mut s = ParsedState::default();
-    parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .expect("succeeds");
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
 }
 
 #[test]
 fn parse_unmod() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-
     let source = r#"
-(dofsrc a b c d)
+(dofsrc a b c d e)
 (doflayer base
   (unmod a)
   (unmod a b)
   (unshift a)
+  (un⇧ a)
   (unshift a b)
 )
 "#;
-    let mut s = ParsedState::default();
-    parse_cfg_raw_string(
-        source,
-        &mut s,
-        &PathBuf::from("test"),
-        &mut FileContentProvider {
-            get_file_content_fn: &mut |_| unimplemented!(),
-        },
-        DEF_LOCAL_KEYS,
-    )
-    .expect("succeeds");
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
 }
 
 #[test]
 fn using_parentheses_in_deflayer_directly_fails_with_custom_message() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofsrc a b)
 (doflayer base ( ))
@@ -1392,6 +1387,7 @@ fn using_parentheses_in_deflayer_directly_fails_with_custom_message() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .expect_err("should err");
     assert!(err
@@ -1401,11 +1397,8 @@ fn using_parentheses_in_deflayer_directly_fails_with_custom_message() {
 
 #[test]
 fn using_escaped_parentheses_in_deflayer_fails_with_custom_message() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut s = ParsedState::default();
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let mut s = ParserState::default();
     let source = r#"
 (dofsrc a b)
 (doflayer base \( \))
@@ -1418,6 +1411,7 @@ fn using_escaped_parentheses_in_deflayer_fails_with_custom_message() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .expect_err("should err");
     assert!(err
@@ -1428,11 +1422,6 @@ fn using_escaped_parentheses_in_deflayer_fails_with_custom_message() {
 #[test]
 #[cfg(feature = "cmd")]
 fn parse_cmd() {
-    let _lk = match CFG_PARSE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-
     let source = r#"
 (dofcfg danger-enable-cmd yes)
 (dofsrc a)
@@ -1448,7 +1437,33 @@ fn parse_cmd() {
     3 (cmd $x $y ($z))
 )
 "#;
-    let mut s = ParsedState::default();
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_defvar_concat() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let source = r#"
+(dofsrc a)
+(doflayer base a)
+(dofvar
+    x (concat a b c)
+    y (concat d (e f))
+    z (squish squash (splish splosh))
+    xx (concat $x $y)
+    xy (concat $x ($y))
+    xz (notconcat a b " " c " d")
+    yx (concat a b " " c " d" ("efg" " hij ") "kl")
+    yz (concat "abc"def"ghi""jkl")
+
+    rootpath "/home/myuser/mysubdir"
+    ;; $otherpath will be the string: /home/myuser/mysubdir/helloworld
+    otherpath (concat $rootpath "/helloworld")
+)
+"#;
+    let mut s = ParserState::default();
     parse_cfg_raw_string(
         source,
         &mut s,
@@ -1457,6 +1472,485 @@ fn parse_cmd() {
             get_file_content_fn: &mut |_| unimplemented!(),
         },
         DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
     )
     .expect("succeeds");
+    match s.vars().unwrap().get("x").unwrap() {
+        SExpr::Atom(a) => assert_eq!(&a.t, "abc"),
+        SExpr::List(l) => panic!("expected string not list: {l:?}"),
+    }
+    match s.vars().unwrap().get("y").unwrap() {
+        SExpr::Atom(a) => assert_eq!(&a.t, "def"),
+        SExpr::List(l) => panic!("expected string not list: {l:?}"),
+    }
+    match s.vars().unwrap().get("z").unwrap() {
+        SExpr::Atom(a) => panic!("expected list not string: {a:?}"),
+        SExpr::List(_) => {}
+    }
+    match s.vars().unwrap().get("xx").unwrap() {
+        SExpr::Atom(a) => assert_eq!(&a.t, "abcdef"),
+        SExpr::List(l) => panic!("expected string not list: {l:?}"),
+    }
+    match s.vars().unwrap().get("xy").unwrap() {
+        SExpr::Atom(a) => assert_eq!(&a.t, "abcdef"),
+        SExpr::List(l) => panic!("expected string not list: {l:?}"),
+    }
+    match s.vars().unwrap().get("xz").unwrap() {
+        SExpr::Atom(a) => panic!("expected list not string {a:?}"),
+        SExpr::List(_) => {}
+    }
+    match s.vars().unwrap().get("yx").unwrap() {
+        SExpr::Atom(a) => assert_eq!(&a.t, "ab c defg hij kl"),
+        SExpr::List(l) => panic!("expected string not list: {l:?}"),
+    }
+    match s.vars().unwrap().get("yz").unwrap() {
+        SExpr::Atom(a) => assert_eq!(&a.t, "abcdefghijkl"),
+        SExpr::List(l) => panic!("expected string not list: {l:?}"),
+    }
+    match s.vars().unwrap().get("otherpath").unwrap() {
+        SExpr::Atom(a) => assert_eq!(&a.t, "/home/myuser/mysubdir/helloworld"),
+        SExpr::List(l) => panic!("expected string not list: {l:?}"),
+    }
+}
+
+#[test]
+fn parse_template_1() {
+    let source = r#"
+(deftemplate home-row (j-behaviour)
+  a s d f g h $j-behaviour k l ; '
+)
+
+(dofsrc
+  grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
+  tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
+  caps (template-expand home-row j)                            ret
+  lsft z    x    c    v    b    n    m    ,    .    /    rsft
+  lctl lmet lalt           spc            ralt rmet rctl
+)
+
+(doflayer base
+  grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
+  tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
+  caps (template-expand home-row (tap-hold 200 200 j lctl))    ret
+  lsft z    x    c    v    b    n    m    ,    .    /    rsft
+  lctl lmet lalt           spc            ralt rmet rctl
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_template_2() {
+    let source = r#"
+(dofvar chord-timeout 200)
+(dofcfg process-unmapped-keys yes)
+
+;; This template defines a chord group and aliases that use the chord group.
+;; The purpose is to easily define the same chord position behaviour
+;; for multiple layers that have different underlying keys.
+(deftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
+  (dofalias
+    $alias1 (chord $chordgroupname $k1)
+    $alias2 (chord $chordgroupname $k2)
+    $alias3 (chord $chordgroupname $k3)
+    $alias4 (chord $chordgroupname $k4)
+  )
+  (dofchords $chordgroupname $chord-timeout
+    ($k1) $k1
+    ($k2) $k2
+    ($k3) $k3
+    ($k4) $k4
+    ($k1 $k2) lctl
+    ($k3 $k4) lsft
+  )
+)
+
+(template-expand left-hand-chords qwerty a s d f qwa qws qwd qwf)
+(template-expand left-hand-chords dvorak a o e u dva dvo dve dvu)
+
+(dofsrc a s d f)
+(doflayer dvorak @dva @dvo @dve @dvu)
+(doflayer qwerty @qwa @qws @qwd @qwf)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_template_3() {
+    let source = r#"
+(deftemplate home-row (version)
+  a s d f g h
+  (if-equal $version v1 j)
+  (if-equal $version v2 (tap-hold 200 200 j (if-equal $version v2 k)))
+   k l ; '
+)
+
+(dofsrc
+  grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
+  tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
+  caps (template-expand home-row v1)                            ret
+  lsft z    x    c    v    b    n    m    ,    .    /    rsft
+  lctl lmet lalt           spc            ralt rmet rctl
+)
+
+(doflayer base
+  grv  1    2    3    4    5    6    7    8    9    0    -    =    bspc
+  tab  q    w    e    r    t    y    u    i    o    p    [    ]    \
+  caps (template-expand home-row v2)                            ret
+  lsft z    x    c    v    b    n    m    ,    .    /    rsft
+  lctl lmet lalt           spc            ralt rmet rctl
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_template_4() {
+    let source = r#"
+(deftemplate home-row (version)
+  a s d f g h
+  (if-not-equal $version v2 j)
+  (if-not-equal $version v1 (tap-hold 200 200 j (if-not-equal $version v1 k)))
+   k l ; '
+)
+
+(dofsrc
+  (template-expand home-row v1)
+)
+
+(doflayer base
+  (template-expand home-row v2)
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_template_5() {
+    let source = r#"
+(deftemplate home-row (version)
+  a s d f g h
+  (if-in-list $version (v0 v3 v1 v4) j)
+  (if-in-list $version (v0 v2 v3 v4) (tap-hold 200 200 j (if-in-list $version (v0 v3 v4 v2) k)))
+   k l ; '
+)
+
+(dofsrc
+  (template-expand home-row v1)
+)
+
+(doflayer base
+  (template-expand home-row v2)
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_template_6() {
+    let source = r#"
+(deftemplate home-row (version)
+  a s d f g h
+  (if-not-in-list $version (v2 v3 v4) j)
+  (if-not-in-list $version (v1 v3 v4) (tap-hold 200 200 j (if-not-in-list $version (v1 v3 v4) k)))
+   k l ; '
+)
+
+(dofsrc
+  (template-expand home-row v1)
+)
+
+(doflayer base
+  (template-expand home-row v2)
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_template_7() {
+    let source = r#"
+(deftemplate home-row (version)
+  a s d f g h
+  (if-in-list $version (v0 v3 (concat v (((1)))) v4) (concat j))
+  (if-in-list $version ((concat v 0) (concat v (2)) v3 v4) (tap-hold 200 200 (concat j) (if-in-list $version (v0 v3 v4 v2) (concat "k"))))
+   k l ; '
+)
+
+(dofsrc
+  (template-expand home-row v1)
+)
+
+(doflayer base
+  (template-expand home-row v2)
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_template_8() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+
+    let source = r#"
+(deftemplate home-row (version)
+  a s d f g h
+  (if-in-list $version (v0 v3 (concat v (((1)))) v4) (concat j))
+  (if-in-list $version ((concat v 0) (concat v (2)) v3 v4) (tap-hold 200 200 (concat j) (if-in-list $version (v0 v3 v4 v2) (concat "k"))))
+   k l ; '
+)
+(deftemplate var () (dofvar num 200))
+(dofsrc
+  (t! home-row v1)
+)
+(doflayer base
+  (t! home-row v2)
+)
+(t! var)
+(dofalias a (tap-dance $num (a)))
+"#;
+    let mut s = ParserState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+        Err("env vars not implemented".into()),
+    )
+    .map_err(|e| {
+        eprintln!("{:?}", miette::Error::from(e));
+    })
+    .expect("parses");
+}
+
+#[test]
+fn test_deflayermap() {
+    let source = r#"
+(dofsrc a b l)
+(doflayermap (blah)
+  d   (macro a b c)
+  e   e
+  f   0
+  j   1
+  k   2
+  l   3
+  m   4
+  =   a
+  a   =
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn test_defaliasenvcond() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    let source = r#"
+(dofsrc spc)
+(doflayer base _)
+(dofaliasenvcond (ENV_TEST 1) a b)
+"#;
+
+    let env_var_err = "env vars not implemented";
+    let mut s = ParserState::default();
+    let parse_err = parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+        Err(env_var_err.into()),
+    )
+    .expect_err("should err");
+    assert_eq!(parse_err.msg, env_var_err);
+
+    // now test with env vars implemented
+
+    let mut s = ParserState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+        Ok(vec![("ENV_TEST".into(), "1".into())]),
+    )
+    .map_err(|e| {
+        eprintln!("{:?}", miette::Error::from(e));
+        ""
+    })
+    .expect("parses");
+    assert!(s.aliases["a"].key_codes().eq(vec![KeyCode::B]));
+
+    // test env var set but to a different value
+
+    let mut s = ParserState::default();
+    parse_cfg_raw_string(
+        source,
+        &mut s,
+        &PathBuf::from("test"),
+        &mut FileContentProvider {
+            get_file_content_fn: &mut |_| unimplemented!(),
+        },
+        DEF_LOCAL_KEYS,
+        Ok(vec![("ENV_TEST".into(), "asdf".into())]),
+    )
+    .map_err(|e| {
+        eprintln!("{:?}", miette::Error::from(e));
+        ""
+    })
+    .expect("parses");
+    assert!(s.aliases.get("a").is_none());
+}
+
+#[test]
+fn parse_platform_specific() {
+    let source = r#"
+(platform () (invalid config but is not used anywhere))
+(dofsrc)
+(doflayermap (base)
+  a (layer-switch 2)
+)
+;; layer 2 must exist on all platforms, all in one list
+(platform (win winiov2 wintercept linux macos)
+  (doflayermap (2)
+    a (layer-switch 3)
+  )
+)
+;; layer 3 must exist on all platforms, in individual lists
+;; Tests for no duplication.
+(platform (win)
+  (doflayermap (3)
+    a (layer-switch 3)
+  )
+)
+(platform (winiov2)
+  (doflayermap (3)
+    a (layer-switch 3)
+  )
+)
+(platform (wintercept)
+  (doflayermap (3)
+    a (layer-switch 3)
+  )
+)
+(platform (linux)
+  (doflayermap (3)
+    a (layer-switch 3)
+  )
+)
+(platform (macos)
+  (doflayermap (3)
+    a (layer-switch 3)
+  )
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_defseq_overlap_limits() {
+    let source = r#"
+(dofsrc)
+(doflayer base)
+(defvirtualkeys v v)
+(dofseq v (O-(a b c d e f)))
+(dofseq v (O-(a b)))
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
+fn parse_defseq_overlap_too_many() {
+    let source = r#"
+(dofsrc)
+(doflayer base)
+(defvirtualkeys v v)
+(dofseq v (O-(a b c d e f g)))
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect_err("fails");
+}
+
+#[test]
+fn parse_layer_opts_icon() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    new_from_file(&std::path::PathBuf::from("./test_cfgs/icon_good.kbd")).unwrap();
+}
+
+#[test]
+fn disallow_dupe_layer_opts_icon_layernonmap() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    new_from_file(&std::path::PathBuf::from("./test_cfgs/icon_bad_dupe.kbd"))
+        .map(|_| ())
+        .expect_err("fails");
+}
+
+#[test]
+fn disallow_dupe_layer_opts_icon_layermap() {
+    let source = "
+(dofcfg)
+(dofsrc)
+(doflayermap (base icon base.png 🖻 n.ico) 0 0)
+";
+    parse_cfg(source).map(|_| ()).expect_err("fails");
+}
+
+#[test]
+fn layer_name_allows_var() {
+    let source = "
+(dofvar l1name base)
+(dofvar l2name l2)
+(dofvar l3name (concat $l1name $l2name))
+(dofvar l4name (concat $l3name actually-4))
+(dofsrc a)
+(doflayer $l1name (layer-while-held $l2name))
+(doflayermap ($l2name)
+  a (layer-while-held $l3name))
+(doflayer ($l3name) (layer-while-held $l4name))
+(doflayer ($l4name icon icon.ico) (layer-while-held $l1name))
+";
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parse succeeds");
+}
+
+#[test]
+fn disallow_whitespace_in_tooltip_size() {
+    let source = "
+(dofcfg
+  tooltip-size 24 24	;; should be 24,24
+)
+(dofsrc 1)
+(doflayer test 1)
+";
+    parse_cfg(source).map(|_| ()).expect_err("fails");
 }

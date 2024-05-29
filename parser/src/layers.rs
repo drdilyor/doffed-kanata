@@ -1,38 +1,62 @@
 use kanata_keyberon::layout::*;
 
+use crate::cfg::alloc::*;
 use crate::cfg::KanataAction;
 use crate::custom_action::*;
 use crate::keys::OsCode;
 
+use std::sync::Arc;
+
 // OsCode::KEY_MAX is the biggest OsCode
 pub const KEYS_IN_ROW: usize = OsCode::KEY_MAX as usize;
 pub const LAYER_ROWS: usize = 2;
-pub const MAX_LAYERS: usize = 25;
-pub const ACTUAL_NUM_LAYERS: usize = MAX_LAYERS * 2;
 
-pub type KanataLayers = Layers<
-    'static,
-    KEYS_IN_ROW,
-    LAYER_ROWS,
-    ACTUAL_NUM_LAYERS,
-    &'static &'static [&'static CustomAction],
->;
+pub type IntermediateLayers = Box<[[Row; LAYER_ROWS]]>;
 
-type Row = [kanata_keyberon::action::Action<'static, &'static &'static [&'static CustomAction]>;
+pub type KLayers =
+    Layers<'static, KEYS_IN_ROW, LAYER_ROWS, &'static &'static [&'static CustomAction]>;
+
+pub struct KanataLayers {
+    layers: Layers<'static, KEYS_IN_ROW, LAYER_ROWS, &'static &'static [&'static CustomAction]>,
+    _allocations: Arc<Allocations>,
+}
+
+impl std::fmt::Debug for KanataLayers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KanataLayers").finish()
+    }
+}
+
+pub type Row = [kanata_keyberon::action::Action<'static, &'static &'static [&'static CustomAction]>;
     KEYS_IN_ROW];
 
-pub fn new_layers() -> Box<KanataLayers> {
-    let boxed_slice: Box<[[Row; LAYER_ROWS]]> = {
-        let mut layers = Vec::with_capacity(ACTUAL_NUM_LAYERS);
-        for _ in 0..ACTUAL_NUM_LAYERS {
-            layers.push([
-                [KanataAction::Trans; KEYS_IN_ROW],
-                [KanataAction::Trans; KEYS_IN_ROW],
-            ]);
-        }
-        layers
+pub fn new_layers(layers: usize) -> IntermediateLayers {
+    let actual_num_layers = layers;
+    // Note: why construct it like this?
+    // Because don't want to construct KanataLayers on the stack.
+    // The stack will overflow because of lack of placement new.
+    let mut layers = Vec::with_capacity(actual_num_layers);
+    for _ in 0..actual_num_layers {
+        layers.push([
+            [KanataAction::Trans; KEYS_IN_ROW],
+            [KanataAction::Trans; KEYS_IN_ROW],
+        ]);
     }
-    .into_boxed_slice();
-    let ptr = Box::into_raw(boxed_slice) as *mut KanataLayers;
-    unsafe { Box::from_raw(ptr) }
+    layers.into_boxed_slice()
+}
+
+impl KanataLayers {
+    /// # Safety
+    ///
+    /// The allocations must hold all of the &'static pointers found in layers.
+    pub(crate) unsafe fn new(layers: KLayers, allocations: Arc<Allocations>) -> Self {
+        Self {
+            layers,
+            _allocations: allocations,
+        }
+    }
+
+    pub(crate) fn get(&self) -> (KLayers, Arc<Allocations>) {
+        (self.layers, self._allocations.clone())
+    }
 }

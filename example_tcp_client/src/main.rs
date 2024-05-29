@@ -1,10 +1,9 @@
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use kanata_tcp_protocol::*;
 use simplelog::*;
-
-use std::io::{stdin, Read, Write};
+use std::io::{stdin, BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::str::FromStr;
+use std::process::exit;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
@@ -12,7 +11,7 @@ use std::time::Duration;
 struct Args {
     /// Port that kanata's TCP server is listening on
     #[clap(short, long)]
-    port: u16,
+    port: Option<u16>,
 
     /// Enable debug logging
     #[clap(short, long)]
@@ -26,9 +25,18 @@ struct Args {
 fn main() {
     let args = Args::parse();
     init_logger(&args);
+    print_usage();
+
+    let port = match args.port {
+        Some(p) => p,
+        None => {
+            log::error!("no port provided via the -p|--port flag; exiting");
+            exit(1);
+        }
+    };
     log::info!("attempting to connect to kanata");
     let kanata_conn = TcpStream::connect_timeout(
-        &SocketAddr::from(([127, 0, 0, 1], args.port)),
+        &SocketAddr::from(([127, 0, 0, 1], port)),
         Duration::from_secs(5),
     )
     .expect("connect to kanata");
@@ -37,6 +45,29 @@ fn main() {
     let reader_stream = kanata_conn;
     std::thread::spawn(move || write_to_kanata(writer_stream));
     read_from_kanata(reader_stream);
+}
+
+fn print_usage() {
+    log::info!(
+        "\n\
+    You can also use any other software to connect to kanata over TCP.\n\
+    The protocol is plaintext JSON with newline terminated messages.
+\n\
+    Layer change notifications from kanata look like:\n\
+    {}
+\n\
+    Requests to change kanata's layer look like:\n\
+    {}
+    ",
+        serde_json::to_string(&ServerMessage::LayerChange {
+            new: "newly-changed-to-layer".into()
+        })
+        .expect("deserializable"),
+        serde_json::to_string(&ClientMessage::ChangeLayer {
+            new: "requested-layer".into()
+        })
+        .expect("deserializable"),
+    )
 }
 
 fn init_logger(args: &Args) {
@@ -62,24 +93,6 @@ fn init_logger(args: &Args) {
     );
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ServerMessage {
-    LayerChange { new: String },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ClientMessage {
-    ChangeLayer { new: String },
-}
-
-impl FromStr for ServerMessage {
-    type Err = serde_json::Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        serde_json::from_str(s)
-    }
-}
-
 fn write_to_kanata(mut s: TcpStream) {
     log::info!("writer starting");
     log::info!("writer: type layer name then press enter to send a change layer request to kanata");
@@ -87,28 +100,46 @@ fn write_to_kanata(mut s: TcpStream) {
     loop {
         stdin().read_line(&mut layer).expect("stdin is readable");
         let new = layer.trim_end().to_owned();
+        if new.starts_with("fk:") {
+            let fkname = new.trim_start_matches("fk:").into();
+            log::info!("writer: telling kanata to tap fake key \"{fkname}\"");
+            let msg = serde_json::to_string(&ClientMessage::ActOnFakeKey {
+                name: fkname,
+                action: FakeKeyActionMessage::Tap,
+            })
+            .expect("deserializable");
+            s.write_all(msg.as_bytes()).expect("stream writable");
+            layer.clear();
+            continue;
+        }
         log::info!("writer: telling kanata to change layer to \"{new}\"");
         let msg =
             serde_json::to_string(&ClientMessage::ChangeLayer { new }).expect("deserializable");
-        let expected_wsz = msg.len();
-        let wsz = s.write(msg.as_bytes()).expect("stream writable");
-        if wsz != expected_wsz {
-            panic!("failed to write entire message {wsz} {expected_wsz}");
-        }
+        s.write_all(msg.as_bytes()).expect("stream writable");
         layer.clear();
     }
 }
 
-fn read_from_kanata(mut s: TcpStream) {
+fn read_from_kanata(s: TcpStream) {
     log::info!("reader starting");
-    let mut buf = vec![0; 256];
+    let mut reader = BufReader::new(s);
+    let mut msg = String::new();
     loop {
-        let sz = s.read(&mut buf).expect("stream readable");
-        let msg = String::from_utf8_lossy(&buf[..sz]);
-        let parsed_msg = ServerMessage::from_str(&msg).expect("kanata sends valid message");
+        msg.clear();
+        reader.read_line(&mut msg).expect("stream readable");
+        let parsed_msg: ServerMessage = match serde_json::from_str(&msg) {
+            Ok(msg) => msg,
+            Err(e) => {
+                log::warn!("could not parse server message {msg}: {e:?}");
+                std::process::exit(1);
+            }
+        };
         match parsed_msg {
             ServerMessage::LayerChange { new } => {
                 log::info!("reader: kanata changed layers to \"{new}\"");
+            }
+            msg => {
+                log::info!("got msg: {msg:?}");
             }
         }
     }

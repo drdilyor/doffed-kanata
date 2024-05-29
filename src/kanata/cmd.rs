@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "simulated_output", allow(dead_code, unused_imports))]
+
 use std::fmt::Write;
 
 use kanata_parser::cfg::parse_mod_prefix;
@@ -7,6 +9,7 @@ use kanata_parser::keys::*;
 // local log prefix
 const LP: &str = "cmd-out:";
 
+#[cfg(not(feature = "simulated_output"))]
 pub(super) fn run_cmd_in_thread(cmd_and_args: Vec<String>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut args = cmd_and_args.iter();
@@ -41,12 +44,13 @@ pub(super) fn run_cmd_in_thread(cmd_and_args: Vec<String>) -> std::thread::JoinH
     })
 }
 
-pub(super) type Item = (KeyAction, OsCode);
+pub(super) type Item = KeyAction;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) enum KeyAction {
-    Press,
-    Release,
+    Press(OsCode),
+    Release(OsCode),
+    Delay(u16),
 }
 use kanata_keyberon::key_code::KeyCode;
 use KeyAction::*;
@@ -68,11 +72,20 @@ fn parse_items<'a>(exprs: &'a [SExpr], items: &mut Vec<Item>) -> &'a [SExpr] {
     match &exprs[0] {
         SExpr::Atom(osc) => match str_to_oscode(&osc.t) {
             Some(osc) => {
-                items.push((Press, osc));
-                items.push((Release, osc));
+                items.push(Press(osc));
+                items.push(Release(osc));
                 &exprs[1..]
             }
-            None => try_parse_chord(&osc.t, exprs, items),
+            None => {
+                use std::str::FromStr;
+                match u16::from_str(&osc.t) {
+                    Ok(delay) => {
+                        items.push(Delay(delay));
+                        &exprs[1..]
+                    }
+                    Err(_) => try_parse_chord(&osc.t, exprs, items),
+                }
+            }
         },
         SExpr::List(sexprs) => {
             let mut remainder = sexprs.t.as_slice();
@@ -108,13 +121,13 @@ fn try_parse_chorded_key(mods: &[KeyCode], osc: &str, chord: &str, items: &mut V
     match str_to_oscode(osc) {
         Some(osc) => {
             for mod_kc in mods.iter().copied() {
-                items.push((Press, mod_kc.into()));
+                items.push(Press(mod_kc.into()));
             }
-            items.push((Press, osc));
+            items.push(Press(osc));
             for mod_kc in mods.iter().copied() {
-                items.push((Release, mod_kc.into()));
+                items.push(Release(mod_kc.into()));
             }
-            items.push((Release, osc));
+            items.push(Release(osc));
         }
         None => {
             log::warn!("{LP} found chord {chord} with invalid key: {osc}");
@@ -141,20 +154,21 @@ fn try_parse_chorded_list<'a>(
         }
         SExpr::List(subexprs) => {
             for mod_kc in mods.iter().copied() {
-                items.push((Press, mod_kc.into()));
+                items.push(Press(mod_kc.into()));
             }
             let mut remainder = subexprs.t.as_slice();
             while !remainder.is_empty() {
                 remainder = parse_items(remainder, items);
             }
             for mod_kc in mods.iter().copied() {
-                items.push((Release, mod_kc.into()));
+                items.push(Release(mod_kc.into()));
             }
             &exprs[1..]
         }
     }
 }
 
+#[cfg(not(feature = "simulated_output"))]
 pub(super) fn keys_for_cmd_output(cmd_and_args: &[String]) -> impl Iterator<Item = Item> {
     let mut args = cmd_and_args.iter();
     let mut cmd = std::process::Command::new(
@@ -195,4 +209,17 @@ pub(super) fn keys_for_cmd_output(cmd_and_args: &[String]) -> impl Iterator<Item
             empty()
         }
     }
+}
+
+#[cfg(feature = "simulated_output")]
+pub(super) fn keys_for_cmd_output(cmd_and_args: &[String]) -> impl Iterator<Item = Item> {
+    println!("cmd-keys:{cmd_and_args:?}");
+    [].iter().copied()
+}
+
+#[cfg(feature = "simulated_output")]
+pub(super) fn run_cmd_in_thread(cmd_and_args: Vec<String>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        println!("cmd:{cmd_and_args:?}");
+    })
 }
