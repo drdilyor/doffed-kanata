@@ -17,5 +17,7 @@ Replaces all of the following with dof-alternative:
 - `deffakekeys`
 - `defchords`
 - `defoverrides`
+- `deftemplate`
+- `defzippy*`
 
 Learn about kanata [here](https://github.com/drdilyor/doffed-kanata)
