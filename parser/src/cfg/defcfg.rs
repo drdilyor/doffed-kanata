@@ -3,40 +3,98 @@ use super::HashSet;
 use super::{error::*, TrimAtomQuotes};
 use crate::cfg::check_first_expr;
 use crate::custom_action::*;
+use crate::keys::*;
 #[allow(unused)]
 use crate::{anyhow_expr, anyhow_span, bail, bail_expr, bail_span};
+
+#[cfg(any(target_os = "linux", target_os = "unknown"))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DeviceDetectMode {
+    KeyboardOnly,
+    KeyboardMice,
+    Any,
+}
+#[cfg(any(target_os = "linux", target_os = "unknown"))]
+impl std::fmt::Display for DeviceDetectMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "unknown"))]
+#[derive(Debug, Clone)]
+pub struct CfgLinuxOptions {
+    pub linux_dev: Vec<String>,
+    pub linux_dev_names_include: Option<Vec<String>>,
+    pub linux_dev_names_exclude: Option<Vec<String>>,
+    pub linux_continue_if_no_devs_found: bool,
+    pub linux_unicode_u_code: crate::keys::OsCode,
+    pub linux_unicode_termination: UnicodeTermination,
+    pub linux_x11_repeat_delay_rate: Option<KeyRepeatSettings>,
+    pub linux_use_trackpoint_property: bool,
+    pub linux_output_bus_type: LinuxCfgOutputBusType,
+    pub linux_device_detect_mode: Option<DeviceDetectMode>,
+}
+#[cfg(any(target_os = "linux", target_os = "unknown"))]
+impl Default for CfgLinuxOptions {
+    fn default() -> Self {
+        Self {
+            linux_dev: vec![],
+            linux_dev_names_include: None,
+            linux_dev_names_exclude: None,
+            linux_continue_if_no_devs_found: false,
+            // historically was the only option, so make KEY_U the default
+            linux_unicode_u_code: crate::keys::OsCode::KEY_U,
+            // historically was the only option, so make Enter the default
+            linux_unicode_termination: UnicodeTermination::Enter,
+            linux_x11_repeat_delay_rate: None,
+            linux_use_trackpoint_property: false,
+            linux_output_bus_type: LinuxCfgOutputBusType::BusI8042,
+            linux_device_detect_mode: None,
+        }
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "unknown"))]
+#[derive(Debug, Clone, Copy)]
+pub enum LinuxCfgOutputBusType {
+    BusUsb,
+    BusI8042,
+}
+
+#[cfg(any(
+    all(feature = "interception_driver", target_os = "windows"),
+    target_os = "unknown"
+))]
+#[derive(Debug, Clone, Default)]
+pub struct CfgWinterceptOptions {
+    pub windows_interception_mouse_hwids: Option<Vec<[u8; HWID_ARR_SZ]>>,
+    pub windows_interception_mouse_hwids_exclude: Option<Vec<[u8; HWID_ARR_SZ]>>,
+    pub windows_interception_keyboard_hwids: Option<Vec<[u8; HWID_ARR_SZ]>>,
+    pub windows_interception_keyboard_hwids_exclude: Option<Vec<[u8; HWID_ARR_SZ]>>,
+}
 
 #[cfg(all(any(target_os = "windows", target_os = "unknown"), feature = "gui"))]
 #[derive(Debug, Clone)]
 pub struct CfgOptionsGui {
     /// File name / path to the tray icon file.
     pub tray_icon: Option<String>,
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     /// Whether to match layer names to icon files without an explicit 'icon' field
     pub icon_match_layer_name: bool,
     /// Show tooltip on layer changes showing layer icons
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub tooltip_layer_changes: bool,
     /// Show tooltip on layer changes for the default/base layer
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub tooltip_no_base: bool,
     /// Show tooltip on layer changes even for layers without an icon
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub tooltip_show_blank: bool,
     /// Show tooltip on layer changes for this duration (ms)
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub tooltip_duration: u16,
     /// Show system notification message on config reload
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub notify_cfg_reload: bool,
     /// Disable sound for the system notification message on config reload
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub notify_cfg_reload_silent: bool,
     /// Show system notification message on errors
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub notify_error: bool,
     /// Set tooltip size (width, height)
-    #[cfg(all(target_os = "windows", feature = "gui"))]
     pub tooltip_size: (u16, u16),
 }
 #[cfg(all(any(target_os = "windows", target_os = "unknown"), feature = "gui"))]
@@ -60,7 +118,10 @@ impl Default for CfgOptionsGui {
 #[derive(Debug)]
 pub struct CfgOptions {
     pub process_unmapped_keys: bool,
+    pub process_unmapped_keys_exceptions: Option<Vec<(OsCode, SExpr)>>,
     pub block_unmapped_keys: bool,
+    pub allow_hardware_repeat: bool,
+    pub start_alias: Option<String>,
     pub enable_cmd: bool,
     pub sequence_timeout: u16,
     pub sequence_input_mode: SequenceInputMode,
@@ -70,6 +131,7 @@ pub struct CfgOptions {
     pub delegate_to_first_layer: bool,
     pub movemouse_inherit_accel_state: bool,
     pub movemouse_smooth_diagonals: bool,
+    pub override_release_on_activation: bool,
     pub dynamic_macro_max_presses: u16,
     pub dynamic_macro_replay_delay_behaviour: ReplayDelayBehaviour,
     pub concurrent_tap_hold: bool,
@@ -77,33 +139,14 @@ pub struct CfgOptions {
     pub trans_resolution_behavior_v2: bool,
     pub chords_v2_min_idle: u16,
     #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_dev: Vec<String>,
-    #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_dev_names_include: Option<Vec<String>>,
-    #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_dev_names_exclude: Option<Vec<String>>,
-    #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_continue_if_no_devs_found: bool,
-    #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_unicode_u_code: crate::keys::OsCode,
-    #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_unicode_termination: UnicodeTermination,
-    #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_x11_repeat_delay_rate: Option<KeyRepeatSettings>,
-    #[cfg(any(target_os = "linux", target_os = "unknown"))]
-    pub linux_use_trackpoint_property: bool,
+    pub linux_opts: CfgLinuxOptions,
     #[cfg(any(target_os = "windows", target_os = "unknown"))]
     pub windows_altgr: AltGrBehaviour,
     #[cfg(any(
         all(feature = "interception_driver", target_os = "windows"),
         target_os = "unknown"
     ))]
-    pub windows_interception_mouse_hwids: Option<Vec<[u8; HWID_ARR_SZ]>>,
-    #[cfg(any(
-        all(feature = "interception_driver", target_os = "windows"),
-        target_os = "unknown"
-    ))]
-    pub windows_interception_keyboard_hwids: Option<Vec<[u8; HWID_ARR_SZ]>>,
+    pub wintercept_opts: CfgWinterceptOptions,
     #[cfg(any(target_os = "macos", target_os = "unknown"))]
     pub macos_dev_names_include: Option<Vec<String>>,
     #[cfg(all(any(target_os = "windows", target_os = "unknown"), feature = "gui"))]
@@ -114,7 +157,10 @@ impl Default for CfgOptions {
     fn default() -> Self {
         Self {
             process_unmapped_keys: false,
+            process_unmapped_keys_exceptions: None,
             block_unmapped_keys: false,
+            allow_hardware_repeat: true,
+            start_alias: None,
             enable_cmd: false,
             sequence_timeout: 1000,
             sequence_input_mode: SequenceInputMode::HiddenSuppressed,
@@ -124,6 +170,7 @@ impl Default for CfgOptions {
             delegate_to_first_layer: false,
             movemouse_inherit_accel_state: false,
             movemouse_smooth_diagonals: false,
+            override_release_on_activation: false,
             dynamic_macro_max_presses: 128,
             dynamic_macro_replay_delay_behaviour: ReplayDelayBehaviour::Recorded,
             concurrent_tap_hold: false,
@@ -131,38 +178,17 @@ impl Default for CfgOptions {
             trans_resolution_behavior_v2: true,
             chords_v2_min_idle: 5,
             #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            linux_dev: vec![],
-            #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            linux_dev_names_include: None,
-            #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            linux_dev_names_exclude: None,
-            #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            linux_continue_if_no_devs_found: false,
-            #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            // historically was the only option, so make KEY_U the default
-            linux_unicode_u_code: crate::keys::OsCode::KEY_U,
-            #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            // historically was the only option, so make Enter the default
-            linux_unicode_termination: UnicodeTermination::Enter,
-            #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            linux_x11_repeat_delay_rate: None,
-            #[cfg(any(target_os = "linux", target_os = "unknown"))]
-            linux_use_trackpoint_property: false,
+            linux_opts: Default::default(),
             #[cfg(any(target_os = "windows", target_os = "unknown"))]
             windows_altgr: AltGrBehaviour::default(),
             #[cfg(any(
                 all(feature = "interception_driver", target_os = "windows"),
                 target_os = "unknown"
             ))]
-            windows_interception_mouse_hwids: None,
-            #[cfg(any(
-                all(feature = "interception_driver", target_os = "windows"),
-                target_os = "unknown"
-            ))]
-            windows_interception_keyboard_hwids: None,
+            wintercept_opts: Default::default(),
             #[cfg(any(target_os = "macos", target_os = "unknown"))]
             macos_dev_names_include: None,
-            #[cfg(all(any(target_os = "windows",target_os = "unknown"), feature = "gui"))]
+            #[cfg(all(any(target_os = "windows", target_os = "unknown"), feature = "gui"))]
             gui_opts: Default::default(),
         }
     }
@@ -173,11 +199,17 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
     let mut seen_keys = HashSet::default();
     let mut cfg = CfgOptions::default();
     let mut exprs = check_first_expr(expr.iter(), "dofcfg")?;
+    let mut is_process_unmapped_keys_defined = false;
     // Read k-v pairs from the configuration
     loop {
         let key = match exprs.next() {
             Some(k) => k,
-            None => return Ok(cfg),
+            None => {
+                if !is_process_unmapped_keys_defined {
+                    log::warn!("The item process-unmapped-keys is not defined in dofcfg. Consider whether process-unmapped-keys should be yes vs. no.");
+                }
+                return Ok(cfg);
+            }
         };
         let val = match exprs.next() {
             Some(v) => v,
@@ -222,8 +254,8 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                     "linux-dev" => {
                         #[cfg(any(target_os = "linux", target_os = "unknown"))]
                         {
-                            cfg.linux_dev = parse_dev(val)?;
-                            if cfg.linux_dev.is_empty() {
+                            cfg.linux_opts.linux_dev = parse_dev(val)?;
+                            if cfg.linux_opts.linux_dev.is_empty() {
                                 bail_expr!(
                                     val,
                                     "device list is empty, no devices will be intercepted"
@@ -238,21 +270,21 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             if dev_names.is_empty() {
                                 log::warn!("linux-dev-names-include is empty");
                             }
-                            cfg.linux_dev_names_include = Some(dev_names);
+                            cfg.linux_opts.linux_dev_names_include = Some(dev_names);
                         }
                     }
                     "linux-dev-names-exclude" => {
                         #[cfg(any(target_os = "linux", target_os = "unknown"))]
                         {
-                            cfg.linux_dev_names_exclude = Some(parse_dev(val)?);
+                            cfg.linux_opts.linux_dev_names_exclude = Some(parse_dev(val)?);
                         }
                     }
                     "linux-unicode-u-code" => {
                         #[cfg(any(target_os = "linux", target_os = "unknown"))]
                         {
                             let v = sexpr_to_str_or_err(val, label)?;
-                            cfg.linux_unicode_u_code =
-                                crate::keys::str_to_oscode(v).ok_or_else(|| {
+                            cfg.linux_opts.linux_unicode_u_code = crate::keys::str_to_oscode(v)
+                                .ok_or_else(|| {
                                     anyhow_expr!(val, "unknown code for {label}: {}", v)
                                 })?;
                         }
@@ -261,7 +293,7 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                         #[cfg(any(target_os = "linux", target_os = "unknown"))]
                         {
                             let v = sexpr_to_str_or_err(val, label)?;
-                            cfg.linux_unicode_termination = match v {
+                            cfg.linux_opts.linux_unicode_termination = match v {
                                 "enter" => UnicodeTermination::Enter,
                                 "space" => UnicodeTermination::Space,
                                 "enter-space" => UnicodeTermination::EnterSpace,
@@ -283,7 +315,7 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             if delay_rate.len() != 2 {
                                 bail_expr!(val, "{}", ERRMSG)
                             }
-                            cfg.linux_x11_repeat_delay_rate = Some(KeyRepeatSettings {
+                            cfg.linux_opts.linux_x11_repeat_delay_rate = Some(KeyRepeatSettings {
                                 delay: match str::parse::<u16>(delay_rate[0]) {
                                     Ok(delay) => delay,
                                     Err(_) => bail_expr!(val, "{}", ERRMSG),
@@ -298,7 +330,41 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                     "linux-use-trackpoint-property" => {
                         #[cfg(any(target_os = "linux", target_os = "unknown"))]
                         {
-                            cfg.linux_use_trackpoint_property = parse_defcfg_val_bool(val, label)?
+                            cfg.linux_opts.linux_use_trackpoint_property =
+                                parse_defcfg_val_bool(val, label)?
+                        }
+                    }
+                    "linux-output-device-bus-type" => {
+                        let bus_type = sexpr_to_str_or_err(val, label)?;
+                        match bus_type {
+                            "USB" | "I8042" => {},
+                            _ => bail_expr!(val, "Invalid value for linux-output-device-bus-type.\nExpected one of: USB or I8042"),
+                        };
+                        #[cfg(any(target_os = "linux", target_os = "unknown"))]
+                        {
+                            let bus_type = match bus_type {
+                                "USB" => LinuxCfgOutputBusType::BusUsb,
+                                "I8042" => LinuxCfgOutputBusType::BusI8042,
+                                _ => unreachable!("validated earlier"),
+                            };
+                            cfg.linux_opts.linux_output_bus_type = bus_type;
+                        }
+                    }
+                    "linux-device-detect-mode" => {
+                        let detect_mode = sexpr_to_str_or_err(val, label)?;
+                        match detect_mode {
+                            "any" | "keyboard-only" | "keyboard-mice" => {},
+                            _ => bail_expr!(val, "Invalid value for linux-device-detect-mode.\nExpected one of: any | keyboard-only | keyboard-mice"),
+                        };
+                        #[cfg(any(target_os = "linux", target_os = "unknown"))]
+                        {
+                            let detect_mode = Some(match detect_mode {
+                                "any" => DeviceDetectMode::Any,
+                                "keyboard-only" => DeviceDetectMode::KeyboardOnly,
+                                "keyboard-mice" => DeviceDetectMode::KeyboardMice,
+                                _ => unreachable!("validated earlier"),
+                            });
+                            cfg.linux_opts.linux_device_detect_mode = detect_mode;
                         }
                     }
                     "windows-altgr" => {
@@ -326,6 +392,13 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             target_os = "unknown"
                         ))]
                         {
+                            if cfg
+                                .wintercept_opts
+                                .windows_interception_mouse_hwids_exclude
+                                .is_some()
+                            {
+                                bail_expr!(val, "{label} and windows-interception-mouse-hwid-exclude cannot both be included");
+                            }
                             let v = sexpr_to_str_or_err(val, label)?;
                             let hwid = v;
                             log::trace!("win hwid: {hwid}");
@@ -346,15 +419,21 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                                     hwid[i] = b;
                                     Ok(hwid)
                             })?;
-                            match cfg.windows_interception_mouse_hwids.as_mut() {
+                            match cfg
+                                .wintercept_opts
+                                .windows_interception_mouse_hwids
+                                .as_mut()
+                            {
                                 Some(v) => {
                                     v.push(hwid_slice);
                                 }
                                 None => {
-                                    cfg.windows_interception_mouse_hwids = Some(vec![hwid_slice]);
+                                    cfg.wintercept_opts.windows_interception_mouse_hwids =
+                                        Some(vec![hwid_slice]);
                                 }
                             }
-                            cfg.windows_interception_mouse_hwids
+                            cfg.wintercept_opts
+                                .windows_interception_mouse_hwids
                                 .as_mut()
                                 .unwrap()
                                 .shrink_to_fit();
@@ -366,45 +445,58 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             target_os = "unknown"
                         ))]
                         {
-                            let hwids = sexpr_to_list_or_err(val, label)?;
-                            let mut parsed_hwids = vec![];
-                            for hwid_expr in hwids.iter() {
-                                let hwid = sexpr_to_str_or_err(
-                                    hwid_expr,
-                                    "entry in windows-interception-mouse-hwids",
-                                )?;
-                                log::trace!("win hwid: {hwid}");
-                                let hwid_vec = hwid
-                                .split(',')
-                                .try_fold(vec![], |mut hwid_bytes, hwid_byte| {
-                                    hwid_byte.trim_matches(' ').parse::<u8>().map(|b| {
-                                        hwid_bytes.push(b);
-                                        hwid_bytes
-                                    })
-                                }).map_err(|_| anyhow_expr!(hwid_expr, "Entry in {label} is invalid. Entries should be numbers [0,255] separated by commas"))?;
-                                let hwid_slice = hwid_vec.iter().copied().enumerate()
-                                .try_fold([0u8; HWID_ARR_SZ], |mut hwid, idx_byte| {
-                                    let (i, b) = idx_byte;
-                                    if i > HWID_ARR_SZ {
-                                        bail_expr!(hwid_expr, "entry in {label} is too long; it should be up to {HWID_ARR_SZ} 8-bit unsigned integers")
-                                    }
-                                    hwid[i] = b;
-                                    Ok(hwid)
-                            });
-                                parsed_hwids.push(hwid_slice?);
+                            if cfg
+                                .wintercept_opts
+                                .windows_interception_mouse_hwids_exclude
+                                .is_some()
+                            {
+                                bail_expr!(val, "{label} and windows-interception-mouse-hwid-exclude cannot both be included");
                             }
-                            match cfg.windows_interception_mouse_hwids.as_mut() {
+                            let parsed_hwids = sexpr_to_hwids_vec(
+                                val,
+                                label,
+                                "entry in windows-interception-mouse-hwids",
+                            )?;
+                            match cfg
+                                .wintercept_opts
+                                .windows_interception_mouse_hwids
+                                .as_mut()
+                            {
                                 Some(v) => {
                                     v.extend(parsed_hwids);
                                 }
                                 None => {
-                                    cfg.windows_interception_mouse_hwids = Some(parsed_hwids);
+                                    cfg.wintercept_opts.windows_interception_mouse_hwids =
+                                        Some(parsed_hwids);
                                 }
                             }
-                            cfg.windows_interception_mouse_hwids
+                            cfg.wintercept_opts
+                                .windows_interception_mouse_hwids
                                 .as_mut()
                                 .unwrap()
                                 .shrink_to_fit();
+                        }
+                    }
+                    "windows-interception-mouse-hwids-exclude" => {
+                        #[cfg(any(
+                            all(feature = "interception_driver", target_os = "windows"),
+                            target_os = "unknown"
+                        ))]
+                        {
+                            if cfg
+                                .wintercept_opts
+                                .windows_interception_mouse_hwids
+                                .is_some()
+                            {
+                                bail_expr!(val, "{label} and windows-interception-mouse-hwid(s) cannot both be used");
+                            }
+                            let parsed_hwids = sexpr_to_hwids_vec(
+                                val,
+                                label,
+                                "entry in windows-interception-mouse-hwids-exclude",
+                            )?;
+                            cfg.wintercept_opts.windows_interception_mouse_hwids_exclude =
+                                Some(parsed_hwids);
                         }
                     }
                     "windows-interception-keyboard-hwids" => {
@@ -413,35 +505,42 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             target_os = "unknown"
                         ))]
                         {
-                            let hwids = sexpr_to_list_or_err(val, label)?;
-                            let mut parsed_hwids = vec![];
-                            for hwid_expr in hwids.iter() {
-                                let hwid = sexpr_to_str_or_err(
-                                    hwid_expr,
-                                    "entry in windows-interception-keyboard-hwids",
-                                )?;
-                                log::trace!("win hwid: {hwid}");
-                                let hwid_vec = hwid
-                                    .split(',')
-                                    .try_fold(vec![], |mut hwid_bytes, hwid_byte| {
-                                        hwid_byte.trim_matches(' ').parse::<u8>().map(|b| {
-                                            hwid_bytes.push(b);
-                                            hwid_bytes
-                                        })
-                                    }).map_err(|_| anyhow_expr!(hwid_expr, "Entry in {label} is invalid. Entries should be numbers [0,255] separated by commas"))?;
-                                let hwid_slice = hwid_vec.iter().copied().enumerate()
-                                    .try_fold([0u8; HWID_ARR_SZ], |mut hwid, idx_byte| {
-                                        let (i, b) = idx_byte;
-                                        if i > HWID_ARR_SZ {
-                                            bail_expr!(hwid_expr, "entry in {label} is too long; it should be up to {HWID_ARR_SZ} 8-bit unsigned integers")
-                                        }
-                                        hwid[i] = b;
-                                        Ok(hwid)
-                                });
-                                parsed_hwids.push(hwid_slice?);
+                            if cfg
+                                .wintercept_opts
+                                .windows_interception_keyboard_hwids_exclude
+                                .is_some()
+                            {
+                                bail_expr!(val, "{label} and windows-interception-keyboard-hwid-exclude cannot both be used");
                             }
-                            parsed_hwids.shrink_to_fit();
-                            cfg.windows_interception_keyboard_hwids = Some(parsed_hwids);
+                            let parsed_hwids = sexpr_to_hwids_vec(
+                                val,
+                                label,
+                                "entry in windows-interception-keyboard-hwids",
+                            )?;
+                            cfg.wintercept_opts.windows_interception_keyboard_hwids =
+                                Some(parsed_hwids);
+                        }
+                    }
+                    "windows-interception-keyboard-hwids-exclude" => {
+                        #[cfg(any(
+                            all(feature = "interception_driver", target_os = "windows"),
+                            target_os = "unknown"
+                        ))]
+                        {
+                            if cfg
+                                .wintercept_opts
+                                .windows_interception_keyboard_hwids
+                                .is_some()
+                            {
+                                bail_expr!(val, "{label} and windows-interception-keyboard-hwid cannot both be used");
+                            }
+                            let parsed_hwids = sexpr_to_hwids_vec(
+                                val,
+                                label,
+                                "entry in windows-interception-keyboard-hwids-exclude",
+                            )?;
+                            cfg.wintercept_opts
+                                .windows_interception_keyboard_hwids_exclude = Some(parsed_hwids);
                         }
                     }
                     "macos-dev-names-include" => {
@@ -566,10 +665,46 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                     }
 
                     "process-unmapped-keys" => {
-                        cfg.process_unmapped_keys = parse_defcfg_val_bool(val, label)?
+                        is_process_unmapped_keys_defined = true;
+                        if let Some(list) = val.list(None) {
+                            let err = "Expected (all-except key1 ... keyN).";
+                            if list.len() < 2 {
+                                bail_expr!(val, "{err}");
+                            }
+                            match list[0].atom(None) {
+                                Some("all-except") => {}
+                                _ => {
+                                    bail_expr!(val, "{err}");
+                                }
+                            };
+                            // Note: doflocalkeys should already be parsed when parsing dofcfg,
+                            // so can use safely use str_to_oscode here; it will include user
+                            // configurations already.
+                            let mut key_exceptions: Vec<(OsCode, SExpr)> = vec![];
+                            for key_expr in list[1..].iter() {
+                                let key = key_expr.atom(None).and_then(str_to_oscode).ok_or_else(
+                                    || anyhow_expr!(key_expr, "Expected a known key name."),
+                                )?;
+                                if key_exceptions.iter().any(|k_exc| k_exc.0 == key) {
+                                    bail_expr!(key_expr, "Duplicate key name is not allowed.");
+                                }
+                                key_exceptions.push((key, key_expr.clone()));
+                            }
+                            cfg.process_unmapped_keys = true;
+                            cfg.process_unmapped_keys_exceptions = Some(key_exceptions);
+                        } else {
+                            cfg.process_unmapped_keys = parse_defcfg_val_bool(val, label)?
+                        }
                     }
+
                     "block-unmapped-keys" => {
                         cfg.block_unmapped_keys = parse_defcfg_val_bool(val, label)?
+                    }
+                    "allow-hardware-repeat" => {
+                        cfg.allow_hardware_repeat = parse_defcfg_val_bool(val, label)?
+                    }
+                    "alias-to-trigger-on-load" => {
+                        cfg.start_alias = parse_defcfg_val_string(val, label)?
                     }
                     "danger-enable-cmd" => cfg.enable_cmd = parse_defcfg_val_bool(val, label)?,
                     "sequence-backtrack-modcancel" => {
@@ -587,7 +722,8 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                     "linux-continue-if-no-devs-found" => {
                         #[cfg(any(target_os = "linux", target_os = "unknown"))]
                         {
-                            cfg.linux_continue_if_no_devs_found = parse_defcfg_val_bool(val, label)?
+                            cfg.linux_opts.linux_continue_if_no_devs_found =
+                                parse_defcfg_val_bool(val, label)?
                         }
                     }
                     "movemouse-smooth-diagonals" => {
@@ -595,6 +731,9 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                     }
                     "movemouse-inherit-accel-state" => {
                         cfg.movemouse_inherit_accel_state = parse_defcfg_val_bool(val, label)?
+                    }
+                    "override-release-on-activation" => {
+                        cfg.override_release_on_activation = parse_defcfg_val_bool(val, label)?
                     }
                     "concurrent-tap-hold" => {
                         cfg.concurrent_tap_hold = parse_defcfg_val_bool(val, label)?
@@ -614,7 +753,11 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                             ),
                         };
                     }
-                    "chords-v2-min-idle-experimental" => {
+                    "chords-v2-min-idle" | "chords-v2-min-idle-experimental" => {
+                        if label == "chords-v2-min-idle-experimental" {
+                            log::warn!("You should replace chords-v2-min-idle-experimental with chords-v2-min-idle\n\
+                                        Using -experimental will be invalid in the future.")
+                        }
                         let min_idle = parse_cfg_val_u16(val, label, true)?;
                         if min_idle < 5 {
                             bail_expr!(val, "{label} must be 5-65535");
@@ -628,6 +771,13 @@ pub fn parse_defcfg(expr: &[SExpr]) -> Result<CfgOptions> {
                 bail_expr!(key, "Lists are not allowed in as keys in dofcfg");
             }
         }
+    }
+}
+
+fn parse_defcfg_val_string(expr: &SExpr, _label: &str) -> Result<Option<String>> {
+    match expr {
+        SExpr::Atom(v) => Ok(Some(v.t.clone())),
+        _ => Ok(None),
     }
 }
 
@@ -753,6 +903,43 @@ fn sexpr_to_list_or_err<'a>(expr: &'a SExpr, label: &str) -> Result<&'a [SExpr]>
         SExpr::Atom(_) => bail_expr!(expr, "The value for {label} must be a list"),
         SExpr::List(l) => Ok(&l.t),
     }
+}
+
+#[cfg(any(
+    all(feature = "interception_driver", target_os = "windows"),
+    target_os = "unknown"
+))]
+fn sexpr_to_hwids_vec(
+    val: &SExpr,
+    label: &str,
+    entry_label: &str,
+) -> Result<Vec<[u8; HWID_ARR_SZ]>> {
+    let hwids = sexpr_to_list_or_err(val, label)?;
+    let mut parsed_hwids = vec![];
+    for hwid_expr in hwids.iter() {
+        let hwid = sexpr_to_str_or_err(hwid_expr, entry_label)?;
+        log::trace!("win hwid: {hwid}");
+        let hwid_vec = hwid
+            .split(',')
+            .try_fold(vec![], |mut hwid_bytes, hwid_byte| {
+                hwid_byte.trim_matches(' ').parse::<u8>().map(|b| {
+                    hwid_bytes.push(b);
+                    hwid_bytes
+                })
+            }).map_err(|_| anyhow_expr!(hwid_expr, "Entry in {label} is invalid. Entries should be numbers [0,255] separated by commas"))?;
+        let hwid_slice = hwid_vec.iter().copied().enumerate()
+            .try_fold([0u8; HWID_ARR_SZ], |mut hwid, idx_byte| {
+                let (i, b) = idx_byte;
+                if i > HWID_ARR_SZ {
+                    bail_expr!(hwid_expr, "entry in {label} is too long; it should be up to {HWID_ARR_SZ} 8-bit unsigned integers")
+                }
+                hwid[i] = b;
+                Ok(hwid)
+        });
+        parsed_hwids.push(hwid_slice?);
+    }
+    parsed_hwids.shrink_to_fit();
+    Ok(parsed_hwids)
 }
 
 #[cfg(any(target_os = "linux", target_os = "unknown"))]

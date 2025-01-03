@@ -1,27 +1,64 @@
-= Configuration
-:toc:
-:toc-placement!:
-:toc-title!:
+= Kanata Configuration Guide
+:last-update-label!:
+ifndef::env-github[]
+:toc: left
+endif::[]
+:stylesheet: config-stylesheet.css
 
-This document describes how to create a kanata configuration file. The kanata
-configuration file will determine your keyboard behaviour upon running kanata.
+This document describes how to create a kanata configuration file.
+The kanata configuration file will determine your keyboard behaviour upon running kanata.
 
-NOTE: The configuration guide you are reading
+== How to read the guide
+
+ifdef::env-github[]
+See the triple bullet-lines at the upper right
+to open or close a Table of Contents sidebar.
+
+You may want to view the guide rendered to HTML.
+https://jtroo.github.io/config.html[Link to guide].
+endif::[]
+
+The **Reference** sections are shorter
+and are intended for reviewing how precisely to configure different sections.
+The **Description** sections are longer
+and contain more details such as advice, motivation, and examples.
+
+The configuration guide you are reading
 may have content not applicable to the version you are using.
 See below for links to specific guide versions.
 
-.Links to specific guide versions
-[%collapsible]
-====
+ifdef::env-github[]
+* https://github.com/jtroo/kanata/blob/v1.7.0/docs/config.adoc[v1.7.0]
 * https://github.com/jtroo/kanata/blob/v1.6.1/docs/config.adoc[v1.6.1]
 * https://github.com/jtroo/kanata/blob/v1.6.0/docs/config.adoc[v1.6.0]
-* https://github.com/jtroo/kanata/blob/v1.5.0/docs/config.adoc[v1.5.0]
-====
+endif::[]
+ifndef::env-github[]
+* link:/config-1.7.0.html[v1.7.0]
+* link:/config-1.6.1.html[v1.6.1]
+* link:/config-1.6.0.html[v1.6.0]
+endif::[]
+
+== Preamble
 
 The configuration file uses S-expression syntax from Lisps. If you are not
 familiar with any Lisp-like programming language, do not be too worried. This
 document will hopefully be a sufficient guide to help you customize your
 keyboard behaviour to your exact liking.
+
+Useful terminology to learn early:
+[cols="1,5"]
+|===
+| string
+| A sequence of characters.
+Optionally surrounded by quotes.
+Examples: `backspace`, `"string with spaces and 1 number"`.
+
+| list
+| A sequence of strings or nested lists within round brackets.
+List items are separated by any amount of whitespace characters,
+or by round brackets.
+Examples: `(lrld-num 1)`, `(tap-dance 200 (f1(unicode 😀)f2(unicode 🙂)))`.
+|===
 
 If you have any questions, confusions, suggestions, etc., feel free to
 https://github.com/jtroo/kanata/discussions/new/choose[start a discussion]
@@ -29,14 +66,7 @@ or https://github.com/jtroo/kanata/issues/new/choose[file an issue].
 If you have ideas for how to improve this document or any other part of the project,
 please be welcome to make a pull request or file an issue.
 
-'''
-
-[[table-of-contents]]
-== Table of contents
-toc::[]
-
 == Forcefully exit kanata [[force-exit]]
-<<table-of-contents,Back to ToC>>
 
 Though this isn't configuration-related,
 it may be important for you to know that pressing and holding all of the
@@ -50,7 +80,6 @@ This mechanism works on the key input **before** any remappings done by kanata.
 
 [[comments]]
 == Comments
-<<table-of-contents,Back to ToC>>
 
 You can add comments to your configuration file. Comments are prefixed with two
 semicolons. E.g:
@@ -77,18 +106,47 @@ a multi-line comment block
 
 [[dofsrc]]
 === dofsrc
-<<table-of-contents,Back to ToC>>
 
-Your configuration file must have exactly one `dofsrc` entry. This defines the
-order of keys that the `+doflayer+` entries will operate on.
+**Reference**
 
-A `dofsrc` entry is composed of `dofsrc` followed by key names that are
-separated by whitespace.
+Your configuration file must have exactly one `dofsrc` list.
+This defines the order of keys that the `+doflayer+` entries will operate on.
 
-It should be noted that the `dofsrc` entry is treated as a long sequence; the
-amount of whitespace (spaces, tabs, newlines) are not relevant. You may use
-spaces, tabs, or newlines however you like to visually format `dofsrc` to your
-liking.
+.Syntax:
+[source]
+----
+(dofsrc $key1 $key2 ... $keyN)
+----
+
+[cols="1,6"]
+|===
+| `$key`
+| The name of a key. This can be a default key name or one defined in <<doflocalkeys>>.
+When physically pressing this input key, the action defined
+at the same order position on the active layer will activate.
+|===
+
+**Description**
+
+The `dofsrc` configuration entry defines which of your key inputs
+will be processed by kanata and how the keys map to defined layers.
+Keys excluded from `dofsrc` will not be processed by Kanata
+unless you have `process-unmapped-keys yes` in <<introduction-dofcfg,dofcfg>>.
+
+Keys not processed by Kanata has implications on various actions.
+For example:
+
+- Pressing an excluded key will type a letter
+while a prior `tap-hold` decision is still pending,
+resulting in potentially incorrect results.
+- Excluded keys do not trigger early activation
+in actions such as `tap-hold-press` or `tap-dance`
+- Excluded keys cannot be read by `fork` or `switch` logic.
+
+The `dofsrc` entry is treated as a long sequence.
+The amount of whitespace (spaces, tabs, newlines) are not relevant.
+You may use spaces, tabs, or newlines however you like
+to visually format `dofsrc` to your liking.
 
 The primary source of all key names are the
 `str_to_oscode` and `default_mappings` functions in
@@ -99,6 +157,7 @@ if you're unable to find the key you're looking for.
 An example `dofsrc` containing the US QWERTY keyboard keys as an
 approximately 60% keyboard layout:
 
+.Example:
 [source]
 ----
 (dofsrc
@@ -110,17 +169,37 @@ approximately 60% keyboard layout:
 )
 ----
 
-Note that some keyboards have a Compose/Menu key instead of a right Meta key.
-In this case you can use `comp` instead of `rmet`.
+Note that some keyboards have a Menu key instead of a right Meta key.
+In this case you can use `menu` instead of `rmet`.
 
-For non-US keyboards, see <<non-us-keyboards,this section>>.
+For non-US keyboards, see <<non-us-keyboards,the non-US keyboards section>>.
 
 [[doflayer]]
 === doflayer
-<<table-of-contents,Back to ToC>>
+
+**Reference**
 
 Your configuration file must have at least one `+doflayer+` entry. This defines
 how each physical key mapped in `+dofsrc+` behaves when kanata runs.
+
+.Syntax:
+[source]
+----
+(doflayer $layer-name $action1 $action2 ... $actionN)
+----
+
+[cols="1,5"]
+|===
+| `$layer-name`
+| A string representing the layer name.
+This name is used to reference this layer in other actions.
+
+| `$action`
+| The action that activates while this layer is active
+when the corresponding `dofsrc` input key is pressed.
+|===
+
+**Description**
 
 A `+doflayer+` configuration entry is followed by the layer name then a list of
 keys or actions. The usable key names are the same as in dofsrc. Actions are
@@ -135,6 +214,7 @@ using actions.
 An example `dofsrc` and `doflayer` that remaps QWERTY to the Dvorak layout
 would be:
 
+.Example:
 [source]
 ----
 (dofsrc
@@ -160,15 +240,51 @@ see https://github.com/jtroo/kanata/blob/main/cfg_samples/tray-icon/tray-icon.kb
 
 ==== doflayermap
 
+**Reference**
+
 An alternative method for defining a layer exists: `doflayermap`.
-This method maps inputs to actions by explicitly defined by input-output pairs
-instead of relying on matching the `dofsrc` ordering.
-This has the advantage of terser configuration
+This method maps inputs to actions by defining input-output pairs,
+ignoring `dofsrc` entirely.
+
+You will likely want to either enable <<process-unmapped-keys>>
+or define most of your keyboard keys within <<dofsrc>> when using `doflayermap`.
+Otherwise many actions do not behave as intended.
+See one of the links for more context.
+
+.Syntax:
+[source]
+----
+(doflayermap ($layer-name)
+ $input1 $action1
+ $input2 $action2
+ ...
+ $inputN $actionN)
+----
+
+[cols="1,5"]
+|===
+| `$layer-name`
+| A string representing the layer name.
+This name is used to reference this layer in other actions.
+
+| `$input`
+| The input key mapped to the corresponding output.
+
+| `$action`
+| The action that activates while this layer is active
+when the corresponding input key is pressed.
+|===
+
+**Description**
+
+
+The `doflayermap` variant has the advantage of terser configuration
 when only a few keys on a layer need to be mapped.
 When practicing a new configuration, the standard `doflayer` has an advantage
-of looking more like physical keyboard layout, which may be helpful to some.
+of looking more like a physical keyboard layout,
+which may be helpful to some.
 
-Within `doflayermap` the very first item must be the layer name.
+Within `doflayermap`, the very first item must be the layer name.
 The layer name must be in parentheses unlike with `doflayer`.
 After the layer name, the layer is configured via pairs of items:
 
@@ -182,31 +298,31 @@ An example complete configuration that maps Caps Lock to Escape is:
 ;; dofsrc is still necessary
 (dofsrc)
 (doflayermap (base-layer)
-  caps esc
-)
+  caps esc)
 ----
 
 The input key takes the same role as `dofsrc` keys.
 The output action takes the role that items in the normal `doflayer` have.
 
-Instead of specifying an input key,
-you can use either `&#95;`, `&#95;&#95;`, or `&#95;&#95;&#95;` to map all
+As special input names,
+you can use one of `&#95;`, `&#95;&#95;`, or `&#95;&#95;&#95;` to map all
 the keys that are not explicitly mapped in the layer,
 e.g. in the example above, these affect keys other than `caps`.
 
-`&#95;` maps only keys that are in dofsrc.
+[cols="1,6"]
+|===
+| `&#95;`
+| Map all unmapped keys in this layer that are defined in `dofsrc`.
 
-`&#95;&#95;` excludes mapping keys that are in dofsrc.
+| `&#95;&#95;`
+| Map all unmapped keys in this layer that are not defined in `dofsrc`.
 
-`&#95;&#95;&#95;` maps all keys that are not explicitly mapped in the layer.
-
-IMPORTANT: You will likely want to either enable <<process-unmapped-keys>>
-or map most of your keyboard keys within dofsrc when using `doflayermap`.
-Otherwise actions such as `tap-hold` do not behave as intended.
+| `&#95;&#95;&#95;`
+| Map all unmapped keys in this layer.
+|===
 
 [[review-of-required-configuration-entries]]
 === Review of required configuration entries
-<<table-of-contents,Back to ToC>>
 
 If you're reading in order, you have now seen all of the required entries:
 
@@ -225,13 +341,24 @@ An example minimal configuration is:
 This will make kanata remap your `a b c` keys to `1 2 3`. This is almost
 certainly undesirable but is a valid configuration.
 
-NOTE: Please have a read through link:./platform-known-issues.adoc[the known platform issues]
+NOTE: Please have a read through link:https://github.com/jtroo/kanata/blob/main/docs/platform-known-issues.adoc[the known platform issues]
 because they may have implications on what you should include/exclude in `dofsrc`.
 The Windows LLHOOK I/O mechanism has the most issues by far.
 
+[[key-names]]
+== Key names for dofsrc and doflayermap
+
+The source of truth for all default key names are the functions
+`str_to_oscode` and `add_default_str_osc_mappings`
+in the link:https://github.com/jtroo/kanata/blob/main/parser/src/keys/mod.rs[keys/mod.rs file].
+
+https://www.toptal.com/developers/keycode[This online tool]
+will also work for most keys to tell you the key name.
+It will be shown as the `event.code` field in the web page
+after you press the key.
+
 [[non-us-keyboards]]
 == Non-US keyboards
-<<table-of-contents,Back to ToC>>
 
 For non-US keyboard users, you may have some keys on your keyboard with characters
 that are not allowed in `dofsrc` by default, at least according to the symbol shown
@@ -241,23 +368,71 @@ The two sections below can help you understand how to remap all your keys.
 === Browser event.code
 
 Ensure kanata and other key remapping programs are **not** running.
-Then you can use https://www.toptal.com/developers/keycode[this link]
+Then you can use https://www.toptal.com/developers/keycode[this online tool]
 and press the key.
-The `event.code` field tells you the key name.
+The `event.code` field tells you the key name to use in Kanata.
 Alternatively, you can read through
 https://www.w3.org/TR/uievents-code/[this reference].
 Due to the lengthy key names,
 you may want to use `doflayermap` if remapping using these key names.
 
-WARNING: On Windows, you should use either `kanata_winIOv2.exe`
+IMPORTANT: On Windows, you should use either `kanata_winIOv2.exe`
 or Interception when using key names according to the browser `event.code`.
 The default `kanata.exe` does not do mappings according to the browser `event.code`
 key names.
 
+[[doflocalkeys]]
 === doflocalkeys
 
+**Reference**
+
 You can use `doflocalkeys` to define additional key names that can be
-used in `dofsrc`, `doflayer` and anywhere else in the configuration.
+used in `dofsrc`, `doflayer`, and anywhere else in the configuration.
+
+.Syntax:
+[source]
+----
+(doflocalkeys-$variant
+  $key-name1 $key-number1
+  $key-name2 $key-number2
+  ...
+  $key-nameN $key-numberN)
+----
+
+[cols="1,5"]
+|===
+| `$variant`
+| One of: `win winiov2 wintercept linux macos`
+
+| `$key-name`
+| A key name of your choice that can be used in the rest of the configuration.
+
+| `$key-number`
+| A key number that varies based on the kanata variant you are using.
+|===
+
+Only one of each doflocalkeys-* variant is allowed. The variants that are not
+applicable will be ignored, e.g. `doflocalkeys-linux` and `doflocalkeys-wintercept`
+are both ignored when using the default Windows `kanata.exe` binary.
+
+**Description**
+
+The `doflocalkeys` configurations are not strictly necessary.
+Their purpose is to help you match your physical keyboard's appearance
+to your kanata configuration,
+in the hopes it will be more readable and less confusing.
+In the underlying hardware, all keyboard positions send the same scan codes
+according to their position, regardless of what is printed on the key cap.
+The scan code names are typically referred to by the corresponding US layout name.
+It is the job of the operating system to translate the same scan code
+to the correct outputs according to the configured locale and layout.
+
+You can find configurations that others have made in
+https://github.com/jtroo/kanata/blob/main/docs/locales.adoc[this document].
+If you do not see your keyboard there and are not confident in using
+the available tools,
+please feel welcome to ask for help in a discussion or issue.
+Please contribute to the document if you are able!
 
 There are five variants of doflocalkeys:
 
@@ -266,17 +441,6 @@ There are five variants of doflocalkeys:
 - `doflocalkeys-wintercept`
 - `doflocalkeys-linux`
 - `doflocalkeys-macos`
-
-Only one of each doflocalkeys-* variant is allowed. The variants that are not
-applicable will be ignored, e.g. `doflocalkeys-linux` and `doflocalkeys-wintercept`
-are both ignored when using the default Windows kanata binary.
-
-You can find configurations that others have made in
-https://github.com/jtroo/kanata/blob/main/docs/locales.adoc[this document].
-If you do not see your keyboard there and are not confident in using
-the available tools,
-please feel welcome to ask for help in a discussion or issue.
-Please contribute to the document if you are able!
 
 .Example:
 [source]
@@ -309,6 +473,11 @@ Please contribute to the document if you are able!
 The number used for a custom key represents the converted value for an OsCode in
 base 10. This differs between Windows-hooks, Windows-interception, and Linux.
 
+Running kanata with the `--debug` flag lets you read the correct number,
+shown in parenthesis of `code` in the `KeyEvent` log lines.
+
+It also possible to use native tools, as described below.
+
 In Linux, `evtest` will give the correct number for the physical key you press.
 
 In Windows using the default hook mechanism, the non-interception version of the
@@ -333,7 +502,6 @@ is very welcome so that future users can have an easier time 🙂.
 
 [[introduction-dofcfg]]
 == Introduction to dofcfg
-<<table-of-contents,Back to ToC>>
 
 Your configuration file may include a single `dofcfg` entry.
 The `dofcfg` can be empty or omitted.
@@ -350,7 +518,6 @@ All other options can be found later in the <<optional-dofcfg-options>> section.
 
 [[process-unmapped-keys]]
 === process-unmapped-keys
-<<table-of-contents,Back to ToC>>
 
 The `process-unmapped-keys` option in `dofcfg` is probably the most
 generally impactful option.
@@ -360,34 +527,60 @@ This might be useful
 if you are only mapping a few keys in dofsrc
 instead of most of the keys on your keyboard.
 
-Without this, some actions like `+rpt+`, `+tap-hold-release+`, `+one-shot+`,
-will not work correctly for subsequent key presses that are not in dofsrc.
+By default, keys excluded from `dofsrc` will not work in various scenarios.
+Some examples:
+
+- The early hold for prior `+tap-hold-press+` actions will not
+- Prior `+one-shot+` actions will not be released
+- `fork` and `switch` logic will not see the key
 
 This option is disabled by default.
-The reason this is not enabled by default is
-because some keys may not work correctly if they are intercepted.
-For example, see <<windows-only-windows-altgr>>.
+The reason this is not enabled by default
+is because some keys may not work correctly if they are intercepted.
+A known issue being AltGr/ralt/Right Alt; see <<windows-only-windows-altgr>>.
 
 .Example:
 [source]
 ----
-(dofcfg
-  process-unmapped-keys yes
-)
+(dofcfg process-unmapped-keys yes)
+(dofcfg process-unmapped-keys (all-except lctl ralt))
 ----
 
 == Aliases and variables[[aliases-and-vars]]
-<<table-of-contents,Back to ToC>>
 
 Before learning about actions,
 it will be useful to first learn about aliases and variables.
 
 [[aliases]]
 === Aliases
-<<table-of-contents,Back to ToC>>
+
+**Reference**
 
 Using the `dofalias` configuration entry, you can introduce a shortcut label
 for an action.
+
+.Syntax:
+[source]
+----
+(dofalias
+  $alias-name1 $action1
+  $alias-name2 $action2
+  ...
+  $alias-nameN $actionN)
+----
+
+[cols="1,5"]
+|===
+| `$alias-name`
+| The chosen name for the shortcut label for the action.
+It can be used in the rest of the configuration
+by prefixing the name with the `@` character.
+
+| `$action`
+| The ouput action used wherever the alias name is referenced.
+|===
+
+**Description**
 
 The `dofalias` entry reads pairs of items in a sequence
 where the first item in the pair is the alias name and the second item is the
@@ -450,10 +643,37 @@ configuration file easier to read.
 
 [[variables]]
 === Variables
-<<table-of-contents,Back to ToC>>
+
+**Reference**
 
 Using the `dofvar` configuration entry,
 you can introduce a shortcut label for an arbitrary string or list.
+
+.Syntax:
+[source]
+----
+(dofvar
+  $var-name1 $var-value1
+  $var-name2 $var-value2
+  ...
+  $var-nameN $var-valueN)
+----
+
+[cols="1,5"]
+|===
+| `$var-name`
+| The chosen name for the shortcut label for the action.
+It can be used in the rest of the configuration
+by prefixing the name with the `@` character.
+
+| `$var-value`
+| An arbitrary string or list that will be substituted
+wherever the variable is used.
+A variable can be used by prefixing the variable name with `$`.
+|===
+
+**Description**
+
 Unlike an alias, a variable does not need to be a valid standalone action.
 In other words,
 a variable can be used as components of actions.
@@ -517,17 +737,46 @@ This section explains the available actions.
 
 [[live-reload]]
 === Live reload
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+Live reload variants:
+
+[cols="1,5"]
+|===
+| `lrld`
+| String action that live-reloads the currently-used configuration file.
+
+| `lrld-next`
+| String action that live-reloads the configuration file specified
+consecutively later in the command line order.
+Cycles to the first-specified file
+if currently using the last file specified.
+
+| `lrld-prev`
+| String action that live-reloads the configuration file specified
+consecutively earlier in the command line order.
+Cycles to the last-specified file
+if currently using the first file specified.
+
+| `(lrld-num $n)`
+| List action that live-reloads the n'th file
+as specified in the command line order.
+The first file specified is `n=1`.
+|===
+
+Live reload does not read or apply changes to device-related configurations.
+Examples of device-related configurations:
+`linux-dev`, `macos-dev-names-include`, `linux-use-trackpoint-property`,
+`windows-only-windows-interception-keyboard-hwids`.
+
+**Description**
 
 You can put the `+lrld+` action onto a key to live reload your configuration file.
 If kanata can't parse the file,
 the previous configuration will continue to be used.
 When live reload is activated,
 the active kanata layer will be the first `doflayer` defined in the configuration.
-
-NOTE: live reload does not read or apply changes to device-related configurations,
-such as `linux-dev`, `macos-dev-names-include`, `linux-use-trackpoint-property`
-or `windows-only-windows-interception-keyboard-hwids`.
 
 .Example:
 [source]
@@ -568,11 +817,30 @@ activating `(lrld-num 2)` would reload the `2nd.cfg` file.
 
 [[layer-switch]]
 === layer-switch
-<<table-of-contents,Back to ToC>>
 
-This action allows you to switch to another "base" layer. This is permanent
-until a `layer-switch` to another layer is activated. The concept of a base
-layer makes more sense when looking at the next action: `layer-while-held`.
+**Reference**
+
+A list action that changes the active base layer.
+
+.Syntax:
+[source]
+----
+(layer-switch $layer-name)
+----
+
+[cols="1,5"]
+|===
+| `$layer-name`
+| Layer name to switch to.
+|===
+
+
+**Description**
+
+This action allows you to switch to another "base" layer.
+This is permanent until a `layer-switch` to another layer is activated.
+The concept of a base layer makes more sense
+when looking at the next action: `layer-while-held`.
 
 This action accepts a single subsequent string which must be a layer name
 defined in a `doflayer` entry.
@@ -585,7 +853,24 @@ defined in a `doflayer` entry.
 
 [[layer-while-held]]
 === layer-while-held
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+A list action that changes the active layer while the key is held.
+
+.Syntax:
+[source]
+----
+(layer-while-held $layer-name)
+----
+
+[cols="1,5"]
+|===
+| `$layer-name`
+| Layer name to activate while key is held.
+|===
+
+**Description**
 
 This action allows you to temporarily change to another layer while the key
 remains held. When the key is released, you go back to the currently active
@@ -606,52 +891,103 @@ inaccurate with regards to its meaning.
 
 [[transparent-key]]
 === Transparent key
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+[cols="1,5"]
+|===
+| `+_+`
+| String action that activates the action of the layer "underneath" the active one.
+|===
+
+**Description**
 
 If you use a single underscore for a key `+_+` then it acts as a "transparent"
 key in a `+doflayer+`. The behaviour depends if `+_+` is on a base layer or a
 while-held layer. When `+_+` is pressed on the active base layer, the key will
 default to the corresponding `dofsrc` key. If `+_+` is pressed on the active
 while-held layer, the base layer's behaviour will activate.
-(alternatively you can use `+‗+` `+≝+`)
+
+[[use-dofsrc]]
+=== use-dofsrc
+
+**Reference**
+
+[cols="1,6"]
+|===
+| `use-dofsrc`
+| String action that outputs the corresponding `dofsrc` input key.
+|===
+
+**Description**
+
+A similar concept to transparent key is the `+use-dofsrc+` action.
+When activated, the underlying `dofsrc` key will be the output action.
 
 .Example:
 [source]
 ----
-(dofsrc
-  a b c d
-)
-
+(dofsrc a b c d)
+(dofalias src use-dofsrc)
 (doflayer remap-only-c-to-d
-  _ ‗ d ≝
-)
+  _ _ d @src)
 ----
 
 [[no-op]]
 === No-op
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+[cols="1,6"]
+|===
+| `XX`
+| String action that will output nothing.
+|===
+
+**Description**
 
 You may use the action `+XX+` as a "no operation" key, meaning pressing the key
 will do nothing. This might be desirable in place of a transparent key on a
 layer that is not fully mapped so that a key that is intentionally not mapped
 will do nothing as opposed to typing a letter.
-(alternatively you can use `+✗+` `+∅+` `+•+`)
+
+Alternatively you can use `+✗+` `+∅+` `+•+` to mean no-op.
 
 .Example:
 [source]
 ----
-(doflayer contains-no-op
-  XX ✗ • f
-)
+(doflayer contains-no-ops
+  XX ✗ ∅ •)
 ----
 
 [[unicode]]
 === Unicode
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+List action that outputs a single unicode codepoint.
+The unicode codepoint will not be repeatedly typed if you hold the key down.
+
+.Syntax:
+[source]
+----
+(unicode $unicode-codepoint)
+----
+
+[cols="1,4"]
+|===
+| `$unicode-codepoint`
+| One unicode codepoint.
+Be warned that many emojis/glyphs/graphemes
+are composed of multiple codepoints.
+|===
+
+**Description**
 
 The `+unicode+` (or `+🔣+`) action accepts a single unicode character (but not
-a composed character, so 🤲, but not 🤲🏿). The character will not be repeatedly
-typed if you hold the key down.
+a composed character, so 🤲, but not 🤲🏿).
+If you want to output a glyph that is composed of multiple codepoints,
+you can use <<macro>> with multiple `unicode` actions.
 
 You may use a unicode character as an alias if desired or in its simplified form `+🔣😀+`
 (vs the usual `+(🔣 😀)+`).
@@ -662,6 +998,7 @@ application.
 NOTE: If using Linux, make sure to look at the
 <<linux-only-linux-unicode-u-code,unicode behaviour customization>> in dofcfg.
 
+.Example:
 [source]
 ----
 (dofalias
@@ -674,13 +1011,97 @@ NOTE: If using Linux, make sure to look at the
 )
 ----
 
+If you want output parentheses `+( )+` via unicode you can quote them.
+
+.Example with parentheses
+[source]
+----
+(dofalias
+  lp (unicode "(")
+  rp (unicode ")")
+)
+----
+
+If you want to output double quotes via unicode
+you need a special quoting syntax.
+
+.Example use of double-quote within a string
+[source]
+----
+(dofalias
+  dq (unicode r#"""#)
+)
+----
+
 [[output-chordscombos]]
 === Output chords/combos
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+Prefixing a known key name with the following strings
+will output the key alongside the specified modifier.
+Multiple prefixes can be combined to add more modifiers
+to the same key output.
+Duplicate prefixes are not allowed.
+
+[cols="1,6"]
+|===
+| `+C-+`
+| Left Control
+
+| `+RC-+`
+| Right Control
+
+| `+A-+`
+| Left Alt
+
+| `+RA-+`
+| Right Alt, also known as AltGr
+
+| `+AG-+`
+| Also means Right Alt/AltGr
+
+| `+S-+`
+| Left Shift
+
+| `+RS-+`
+| Right Shift
+
+| `+M-+`
+| Left Meta
+
+| `+RM-+`
+| Right Meta
+|===
+
+A special behaviour of output chords is that if another key is pressed,
+all of the chord keys will be released
+before the newly pressed key action activates.
+The modifier keys are often not desired for subsequent actions
+and without this behaviour,
+rapid typing can result in undesired modified key presses.
+If you want keys to remain pressed, use <<multi>> instead.
+
+**Description**
 
 You may want to remap a key to automatically be pressed in combination with
-modifiers such as Control or Shift. You can achieve this by prefixing the
-normal key name with one or more of:
+modifiers such as Control or Shift.
+Output chords are a way for you to achieve this.
+
+Output chords are typically used do one-off actions such as:
+
+- type a symbol, e.g. `S-1` to output `!` for the US layout.
+- type an accented character,
+e.g. `RA-a` to output `á` for the US international layout.
+- do a special action like `C-c` to send `SIGTERM` in the terminal
+
+It should be noted that output chords are not usable in all configuration items.
+If you get an unknown key error where you expected an output chord to be usable,
+you must split the output chord into its component keys.
+For example, `+(unmod C-l)+` is an error;
+instead you should use `+(unmod lctl l)+`.
+
+The output chord prefix strings are:
 
 * `+C-+`: Left Control (also `+‹⎈+` `+‹⌃+` or without the `+‹+` side indicator)
 * `+RC-+`: Right Control (also `+⎈›+` `+⌃›+`)
@@ -690,22 +1111,6 @@ normal key name with one or more of:
 * `+RS-+`: Right Shift (also `+⇧›+`)
 * `+M-+`: Left Meta, a.k.a. Windows, GUI, Command, Super (also `+‹⌘+` `+‹❖+` `+‹◆+` or without the `+‹+` side indicator))
 * `+RM-+`: Right Meta (also `+⌘›+` `+❖›+` `+◆›+`)
-
-These modifiers may be combined together if desired.
-
-NOTE: A special behaviour of output chords is that if another key is pressed,
-all of the chord keys will be released
-before the newly pressed key action activates.
-The modifier keys are often not desired for subsequent actions
-and without this behaviour,
-rapid typing can result in undesired modified key presses.
-If you want keys to remain pressed, use <<multi>> instead.
-
-Output chords are typically used do one-off actions such as:
-
-- type a symbol, e.g. `S-1`
-- type a special/accented character, e.g. `RA-a`
-- do a special action like `C-c` to send `SIGTERM` in the terminal
 
 .Example:
 [source]
@@ -725,7 +1130,19 @@ Output chords are typically used do one-off actions such as:
 
 [[repeat-key]]
 === Repeat key
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+[cols="1,5"]
+|===
+| `rpt`
+| String action that outputs the single most-recently typed key.
+
+| `rpt-any`
+| String action that outputs the most-recently outputted action.
+|===
+
+**Description**
 
 The action `+rpt+` repeats the most recently typed key. Holding down this key
 will not repeatedly send the key. The intended use case is to be able to use a
@@ -757,17 +1174,32 @@ and would output `ctrl+c` in the example case.
 
 [[release-a-key-or-layer]]
 === Release a key or layer
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+[cols="1,2"]
+|===
+| `(release-key $key)`
+| List action that releases the defined key from output actions.
+Notably this does not act on key inputs.
+
+| `(release-layer $layer-name)`
+| List action that releases `layer-while-held` activations
+for the given layer name.
+|===
+
+**Description**
 
 You can release a held key or layer via these actions:
 
 * `release-key` or `key↑`: release a key, accepts `dofsrc` compatible names
 * `release-layer` or `layer↑`: release a while-held layer
 
-NOTE:
 A lower-level detail of these actions is that they operate on output states
 as opposed to virtually releasing an input key.
-This does have some practical significance but for the most part it is not important.
+This does have some practical significance.
+For example, if the action `(macro-repeat a 50)` were on the `a` key,
+activating `(release-key a)` will not stop the repeating macro.
 
 An example practical use case for `release-key` is seen in the `multi` section
 directly below.
@@ -777,7 +1209,24 @@ There is currently no known practical use case for
 
 [[multi]]
 === multi
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+Activate multiple actions in sequence.
+
+.Syntax:
+[source]
+----
+(multi $action1 $action2 ... $actionN)
+----
+
+[cols="1,3"]
+|===
+| `$action`
+| An output action.
+|===
+
+**Description**
 
 The `+multi+` action executes multiple keys or actions in order but also
 simultaneously. It accepts one or more actions.
@@ -828,16 +1277,92 @@ and that would work as intended.
 It is recommended to avoid `multi` if it can be replaced
 with a different action like `macro` or an output chord.
 
+==== reverse-release-order
+
+**Reference**
+
+String item that can be used inside of `(multi ...)`
+to reverse the release order of any keys that were pressed
+as part of `multi`.
+
+.Syntax:
+[source]
+----
+(multi ... reverse-release-order)
+----
+
+**Description**
+
+Within `multi` you can use include `reverse-release-order`
+to do what the action states: reverse the typical release order from
+if you have multiple keys in multi.
+
+For example, pressing then releasing a key with the action:
+`(multi a b c)` would press a b c in the stated order
+and then release a b c in the stated order.
+Changing it to `(multi a b c reverse-release-order)`
+would press a b c in the stated order
+and then release c b a in the stated order.
+
+.Example:
+[source]
+----
+(dofalias
+  S-a-reversed (multi lsft a reverse-release-order)
+)
+----
+
 [[mouse-actions]]
 === Mouse actions
-<<table-of-contents,Back to ToC>>
 
 You can click the left, middle, and right buttons using kanata actions, do
 vertical/horizontal scrolling, and move the mouse.
 
 [[mouse-buttons]]
 ==== Mouse buttons
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+You can activate mouse actions with the string actions below.
+
+[cols="1,5"]
+|===
+| `mlft`
+| Hold left mouse button.
+
+| `mmid`
+| Hold middle mouse button.
+
+| `mrgt`
+| Hold right mouse button.
+
+| `mfwd`
+| Hold forward mouse button.
+
+| `mbck`
+| Hold backward mouse button.
+
+| `mltp`
+| Tap left mouse button.
+
+| `mmtp`
+| Tap middle mouse button.
+
+| `mrtp`
+| Tap right mouse button.
+
+| `mftp`
+| Tap forward mouse button.
+
+| `mbtp`
+| Tap backward mouse button.
+|===
+
+In Linux and Windows-Interception,
+the hold actions can be used within `dofsrc` and `doflayermap`
+to remap mouse buttons like keyboard keys.
+
+**Description**
 
 The mouse button actions are:
 
@@ -882,7 +1407,40 @@ The actions are as follows:
 
 [[mouse-wheel]]
 ==== Mouse wheel
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+The `mwheel-*` actions allow you to emulate a mouse wheel.
+Holding the action will repeatedly scroll
+according to the action configuration.
+
+.Syntax:
+[source]
+----
+(mwheel-$variant $interval $distance)
+----
+
+[cols="1,4"]
+|===
+| `$variant`
+| One of `up down left right` representing the scroll direction to use.
+
+| `$interval`
+| Number of milliseconds between scroll actions.
+
+| `$distance`
+| Distance to travel per activation.
+The number `120` represents a complete notch on
+standard resolution mice and in some environments,
+120 or a multiple of it should be what is used.
+|===
+
+You may use these key names within `dofsrc`
+to remap scroll events as if they were keys,
+corresponding to up, down, left, right respectively:
+`mwu`, `mwd`, `mwl`, `mwr`.
+
+**Description**
 
 The mouse wheel actions are:
 
@@ -914,7 +1472,59 @@ you will probably get way more events than you intended.
 
 [[mouse-movement]]
 ==== Mouse movement
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+The `movemouse-*` actions allow you to move the mouse cursor.
+Holding the action will repeatedly move the cursor
+according to the configuration.
+
+.Syntax:
+[source]
+----
+(movemouse-$variant $interval $distance)
+----
+
+[cols="1,4"]
+|===
+| `$variant`
+| One of `up down left right` representing the direction to move.
+
+| `$interval`
+| Number of milliseconds between move activations.
+
+| `$distance`
+| Distance to travel per activation in unit of pixels.
+|===
+
+There is a move mouse variant that increases distance per activation
+at a constant rate until a maximum is reached.
+
+.Syntax:
+[source]
+----
+(movemouse-accel-$variant $interval $acceleration-time $min $max)
+----
+
+[cols="1,4"]
+|===
+| `$variant`
+| One of `up down left right` representing the direction to move.
+
+| `$interval`
+| Number of milliseconds between move activations.
+
+| `$acceletaion-time`
+| Number of milliseconds until max distance per activation is reached.
+
+| `$min`
+| Initial distance to travel per activation in unit of pixels.
+
+| `$max`
+| Maximum distance to travel per activation in unit of pixels.
+|===
+
+**Description**
 
 The mouse movement actions are:
 
@@ -945,7 +1555,6 @@ There is a toggable dofcfg option related to `movemouse-accel` - <<movemouse-inh
 
 [[set-mouse]]
 ==== Set absolute mouse position
-<<table-of-contents,Back to ToC>>
 
 The action `setmouse` or `set🖱` sets the absolute mouse position.
 
@@ -966,7 +1575,6 @@ Experimentation will be needed.
 
 [[mouse-speed]]
 ==== Modify the speed of mouse movements
-<<table-of-contents,Back to ToC>>
 
 The action `movemouse-speed` or `🖱speed` modifies the speed at which `movemouse` and
 `movemouse-accel` function at runtime. It does this by expanding or shrinking
@@ -989,7 +1597,6 @@ WARNING: Due to the nature of pixels being whole numbers, some values such as
 
 [[mouse-all-actions-example]]
 ==== Mouse all actions example
-<<table-of-contents,Back to ToC>>
 
 [source]
 ----
@@ -1025,7 +1632,37 @@ WARNING: Due to the nature of pixels being whole numbers, some values such as
 
 [[tap-dance]]
 === tap-dance
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+The `tap-dance` action allows performing different actions
+based on number of consecutive taps of the same key.
+
+.Syntax:
+[source]
+----
+(tap-dance $timeout $action-list)
+----
+
+[cols="1,4"]
+|===
+| `$timeout`
+| Number of milliseconds after which the tap-dance ends.
+
+| `$action-list`
+| A list of actions that can be selected, ordered by number of taps.
+|===
+
+The `tap-dance-eager` variant will eagerly perform actions.
+Use of `macro` and `bspc` can help to backtrack for the 2nd tap onwards.
+
+.Syntax:
+[source]
+----
+(tap-dance-eager $timeout $action-list)
+----
+
+**Description**
 
 The `+tap-dance+` action allows repeated tapping of a key to result in
 different actions. It is followed by a timeout (unit: ms) and a list
@@ -1073,7 +1710,55 @@ In the example below, repeated taps will, in order:
 
 [[one-shot]]
 === one-shot
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+Activate keys or layers for a time without keeping the input key held,
+for one subsequent key.
+Activating other one-shot actions,
+while one or more are already active,
+will reset the timeout,
+and overlap the one-shot actions.
+
+
+.Syntax:
+[source]
+----
+($one-shot-variant $timeout $action)
+----
+
+Values for `$variant`:
+[cols="1,3"]
+|===
+| `one-shot-press`
+| End on the first press of another key.
+This is also the variant selected by the name `one-shot`.
+
+| `+one-shot-release+`
+| End on the first release of a newly pressed key.
+
+| `+one-shot-press-pcancel+`
+| End on the first press of another key
+  or on re-press of another active one-shot key
+
+| `+one-shot-release-pcancel+`
+| End on the first release of a newly pressed key
+  or on re-press of another active one-shot key.
+|===
+
+Other items:
+[cols="1,3"]
+|===
+| `$timeout`
+| Number of milliseconds after which
+if not deactivated due to user input,
+one-shot will deactivate on its own.
+
+| `$action`
+| Layer action, key, or output chord.
+|===
+
+**Description**
 
 The `+one-shot+` action is similar to "sticky keys", if you know what that is.
 This activates an action or key until either the timeout expires or a different
@@ -1114,6 +1799,9 @@ than the initial key pressed.
 
 The default name `+one-shot+` corresponds to `+one-shot-press+`.
 
+NOTE: When using one-shot with keys that will trigger dofoverrides,
+you will likely want to adjust <<override-release-on-activation>> to yes in `dofcfg`.
+
 .Example:
 [source]
 ----
@@ -1126,17 +1814,134 @@ The default name `+one-shot+` corresponds to `+one-shot-press+`.
 )
 ----
 
+[[one-shot-pause-processing]]
+==== one-shot-pause-processing
+
+**Reference**
+
+Pause `one-shot` processing of new input keypresses for a time,
+to allow actions that are not intended to consume `one-shot`
+to take place.
+
+.Syntax:
+[source]
+----
+(one-shot-pause-processing $time)
+----
+
+[cols="1,5"]
+|===
+| `time`
+| Number of milliseconds to ignore processing.
+Something notable is that one virtual key press or releas
+(tap is a separate press and subsequent release)
+will take 1ms to process.
+If using virtual keys this number must be larger
+than the number of virtual key events that are taking place.
+|===
+
+**Description**
+
+The `one-shot-pause-processing` list action allows you to pause the
+key press processing of one-shot activations.
+An example of when this is useful the following sequence:
+
+- Activate a layer-while-held
+- Activate a one-shot action on that layer
+- Release the layer-while-held key, which has an `(on-release ...)` action
+  associated with it.
+- The on-release action is not intended to consume one-shot activations
+
+In the scenario above, by default the on-release activation
+would trigger deactivation of one-shot;
+thus the pause processing action must be used to stop this from happening.
 
 [[tap-hold]]
 === tap-hold
-<<table-of-contents,Back to ToC>>
 
 WARNING: The `tap-hold` action and all variants can behave unexpectedly on Linux
 with respect to repeat of antecedent key presses.
 The full context is in https://github.com/jtroo/kanata/discussions/422[discussion #422].
 In brief, the workaround is to use `tap-hold` inside of <<multi,multi>>,
 combined with another key action that behaves as a no-op like `f24`. +
-Example: `(multi f24 (tap-hold ...))`
+Example: `(multi f24 (tap-hold ...))`.
+If multiple `tap-hold` actions may be pressed subsequently,
+all using the `f24` workaround,
+you may need to release the `f24` within the same `multi`
+to avoid repeats from one double-tapped `tap-hold` action
+followed by another, different `tap-hold` action.
+Example:
+`(defvirtualkeys relf24 (release-key f24)) ... (multi f24 (tap-hold ...) (macro 5 (on-press tap-vkey relf24)))`
+
+**Reference**
+
+The `tap-hold` action lets you activate different actions
+depending it a key is tapped or held.
+
+.Syntax:
+[source]
+----
+(tap-hold $tap-timeout $hold-timeout $tap-action $hold-action)
+----
+
+[cols="1,4"]
+|===
+| `$tap-timeout`
+| Number of milliseconds for the window that a tap into re-press with hold
+results in the `$tap-action` being held.
+
+| `$hold-timeout`
+| Number of milliseconds after which the `$hold-action` activates.
+Releasing the key before this elapses
+results in `$tap-action` activating.
+
+| `$tap-action`
+| Action to activate when the input is determined to be a "tap".
+
+| `$hold-action`
+| Action to activate when the input is determined to be a "hold".
+|===
+
+.Variants:
+----
+(tap-hold-press $tap-timeout $hold-timeout $tap-action $hold-action)
+(tap-hold-release $tap-timeout $hold-timeout $tap-action $hold-action)
+(tap-hold-press-timeout $tap-timeout $hold-timeout $tap-action $hold-action $timeout-action)
+(tap-hold-release-timeout $tap-timeout $hold-timeout $tap-action $hold-action $timeout-action)
+(tap-hold-release-keys $tap-timeout $hold-timeout $tap-action $hold-action $tap-keys)
+(tap-hold-except-keys $tap-timeout $hold-timeout $tap-action $hold-action $tap-keys)
+----
+
+[cols="1,2"]
+|===
+| `tap-hold-press`
+| Activate `$hold-action` early if held and another input key is pressed.
+
+| `tap-hold-release`
+| Activate `$hold-action` early if held and another input key is pressed and released.
+
+| `tap-hold-press-timeout`
+| Activate `$hold-action` if held and another input key is pressed.
+If the defined timeout elapses, `$timeout-action` will activate.
+
+| `tap-hold-release-timeout`
+| Activate `$hold-action` early if held and another input key is pressed and released.
+If the defined timeout elapses, `$timeout-action` will activate.
+
+| `tap-hold-release-keys`
+| Activate `$hold-action` early if held and another input key is pressed and released.
+The `$tap-keys` parameter is a list of key names.
+Activates `$tap-action` early if a key within `$tap-keys` is pressed before hold activates.
+
+| `tap-hold-except-keys`
+| The `$tap-keys` parameter is a list of key names.
+Activates $tap-action if a key within $tap-keys is pressed
+or if the action key is released before hold timeout.
+No key is ever output until the action key is released
+or another key is pressed,
+which differs from the default `tap-hold` behaviour.
+|===
+**Description**
 
 The `+tap-hold+` action allows you to have one action/key for a "tap" and a
 different action/key for a "hold". A tap is a rapid press then release of the
@@ -1288,7 +2093,54 @@ that are in `doflayer`, `dofalias`, etc. for the corresponding `dofsrc` key.
 
 [[macro]]
 === macro
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+The macro action taps the configured sequence of keys or actions.
+Numbers can be used to delay the sequence by the defined number of milliseconds.
+
+.Syntax:
+[source]
+----
+(macro $macro-action1 $macro-action2 ... $macro-actionN)
+----
+
+[cols="1,4"]
+|===
+| `$macro-action`
+| A delay, key, action within the subset allowed within macros,
+or an output-chord-prefixed list of more macro-actions.
+|===
+
+.Variants:
+----
+(macro-release-cancel ...)
+(macro-cancel-on-press ...)
+(macro-release-cancel-and-cancel-on-press ...)
+(macro-repeat ...)
+(macro-repeat-$cancel-variant ...)
+----
+[cols="1,2"]
+|===
+| `macro-release-cancel`
+| Cancel all active macros if the key is released.
+
+| `macro-cancel-on-press`
+| Cancel all active macros if a different key is pressed.
+
+| `macro-release-cancel-and-cancel-on-press`
+| Cancel all active macros if either the key is released or a different key is pressed.
+
+| `macro-repeat`
+| Repeat the macro while held.
+
+| `macro-repeat-$cancel-variant`
+| Repeat the macro while held.
+Cancels the final repeat according the the behaviour of one of the variants:
+`release-cancel`, `cancel-on-press`, `release-cancel-and-cancel-on-press`.
+|===
+
+**Description**
 
 The `+macro+` action will tap a sequence of keys with optional
 delays. This is different from `+multi+` because in the `+multi+` action,
@@ -1299,8 +2151,12 @@ not. This is not possible with `+multi+`.
 
 The `+macro+` action accepts one or more keys, some actions, chords, and delays
 (unit: ms).  It also accepts a list prefixed with <<output-chordscombos,output chord>>
-modifiers where the list is subject to the aforementioned restrictions. The
-number keys will be parsed as delays, so they must be aliased to be used in a macro.
+modifiers where the list is subject to the aforementioned restrictions.
+
+IMPORTANT: The number keys `0-9` will be parsed as millisecond delays
+whereas in other contexts they would be parsed as key names.
+To use the numbered keys they must be aliased
+or otherwise use the key names `Digit0-Digit9`.
 
 Up to 4 macros can be active at the same time.
 
@@ -1311,7 +2167,7 @@ The actions supported in `+macro+` are:
 * <<mouse-actions,mouse actions>>
 * <<repeat-key,repeat>>
 * <<live-reload,live reload>>
-* <<fake-keys,virtual keys/fake keys>>
+* <<virtual-keys,virtual key actions>>
 * <<sequences,sequence leader>>
 * <<arbitrary-code,arbitrary keycode>>
 * <<dynamic-macro,dynamic macro>>
@@ -1342,11 +2198,17 @@ needs the delay of `5` to work correctly.
 )
 ----
 
-There is a variant of the `+macro+` action that will cancel all active macros
-upon releasing the key: `+macro-release-cancel+` or `+macro↑⤫+`. It is parsed identically to
-the non-cancelling version. An example use case for this action is holding down
-a key to get different outputs, similar to tap-dance but one can see which keys
-are being outputted.
+[[macro-release-cancel]]
+==== macro-release-cancel
+
+The `macro-release-cancel` variant of the `+macro+` action
+will cancel all active macros
+upon releasing the key.
+Shorter unicode variant: `+macro↑⤫+`.
+This variant is parsed identically to the non-cancelling version.
+An example use case for this action is holding down
+a key to get different outputs,
+similar to tap-dance but one can see which keys are being outputted.
 
 E.g. in the example below, when holding the key, first `1` is typed, then
 replaced by `!` after 500ms, and finally that is replaced by `@` after another
@@ -1364,7 +2226,43 @@ and the rest of the macro does not run.
 )
 ----
 
-There are further variants of the two `macro` actions which repeat while held.
+[[macro-cancel-on-press]]
+==== macro-cancel-on-press
+
+The `macro-cancel-on-press` variant of the `macro action`
+enables a cancellation trigger for all active macros including itself,
+which is activated when a physical press of any other key happens.
+The trigger is enabled while the macro is in progress.
+
+[source]
+----
+(dofalias
+  1 1
+  1!@ (macro-cancel-on-press @1 500 bspc S-1 500 bspc S-2)
+)
+----
+
+[[macro-release-cancel-and-cancel-on-press]]
+==== macro-release-cancel-and-cancel-on-press
+
+The `macro-release-cancel-and-cancel-on-press` variant
+combines the cancel behaviours
+of both the release-cancel and cancel-on-press.
+
+[source]
+----
+(dofalias
+  1 1
+  1!@ (macro-release-cancel-and-cancel-on-press @1 500 bspc S-1 500 bspc S-2)
+)
+----
+
+
+[[macro-repeat]]
+==== macro-repeat
+
+There are further `macro-repeat` variants of the three `macro` actions described previously.
+These variants repeat while held.
 The repeat will only occur once all macros have completed,
 including the held macro key.
 If multiple repeating macros are being held simulaneously,
@@ -1374,15 +2272,48 @@ only the most recently pressed macro will be repeated.
 ----
 (dofalias
   mr1 (macro-repeat mltp)
-  mr2 (macro⟳ mltp)
   mr2 (macro-repeat-release-cancel mltp)
-  mr2 (macro⟳↑⤫ mltp)
+  mr3 (macro-repeat-cancel-on-press mltp)
+  mr4 (macro-repeat-release-cancel-and-cancel-on-press mltp)
 )
 ----
 
 [[dynamic-macro]]
 === dynamic-macro
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+Record and replay key inputs.
+
+.Syntax:
+[source]
+----
+(dynamic-macro-record $id)
+(dynamic-macro-play   $id)
+(dynamic-macro-record-stop)
+(dynamic-macro-record-stop-truncate $count)
+----
+
+[cols="1,3"]
+|===
+| `dynamic-macro-record`
+| Record a dynamicro macro which will be saved with the defined `$id`.
+
+| `dynamic-macro-play`
+| Play back a macro saved with the defined `$id`.
+
+| `dynamic-macro-record-stop`
+| Stop and save a macro recording.
+This can also be achieved by recording a new macro
+or re-pressing record with the same `$id`.
+
+| `dynamic-macro-record-stop-truncate`
+| Stop and save a macro recording while truncating `$count` events
+from the end of the recording.
+This can be useful if the record/stop button is on a different layer.
+|===
+
+**Description**
 
 The dynamic-macro actions allow for recording and playing key presses. The
 dynamic macro records physical key presses, as opposed to kanata's outputs.
@@ -1428,29 +2359,46 @@ while recording with `(dynamic-macro-record 0)` will be ignored.
 )
 ----
 
-[[fork]]
-=== fork
-<<table-of-contents,Back to ToC>>
-
-The fork action accepts two actions and a key list.
-The first (left) action will activate by default.
-The second (right) action will activate
-if any of the keys in the third parameter (right-trigger-keys) are currently active.
-
-.Example:
-[source]
-----
-(dofalias
-  frk (fork k @special (lalt ralt))
-)
-----
-
-TIP: the keys `nop0-nop9` can be used as no-op outputs that
-can still be checked within `fork`, unlike what `XX` does.
-
 [[caps-word]]
 === caps-word
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+The `caps-word` action puts Kanata into a state where
+typed keys are automatically shifted by `lsft`.
+The state persists until terminated by timeout
+or by typing a key that ends the state.
+Typing a non-terminating key refreshes the timeout duration.
+
+The `-toggle` variants will end the caps-word state
+if pressed while caps-word is active,
+whereas the re-pressing the standard variants
+will keep the state active and refresh the timeout duration.
+
+.Syntax:
+[source]
+----
+(caps-word $timeout)
+(caps-word-toggle $timeout)
+(caps-word-custom $timeout $shifted-list $non-terminal-list)
+(caps-word-custom-toggle $timeout $shifted-list $non-terminal-list)
+----
+
+[cols="1,4"]
+|===
+| `$timeout`
+| Number of milliseconds after which the caps-word state ends.
+The duration is refreshed upon typing a non-terminating character.
+
+| `$shifted-list`
+| List of keys that will be automatically shifted.
+
+| `$non-terminal-list`
+| List of keys that are not shifted
+but which do not terminate the caps-word state.
+|===
+
+**Description**
 
 The `caps-word` or `word⇪` action triggers a state where the `lsft` key
 will be added to the active key list
@@ -1485,7 +2433,7 @@ You can use `caps-word-custom` or `word⇪-custom` instead of `caps-word`
 if you want to manually define which keys are capitalized (2nd parameter)
 and what the extra non-terminal+non-capitalized keys should be (3rd parameter).
 
-.Example
+.Example:
 [source]
 ----
 (dofalias
@@ -1504,11 +2452,11 @@ and what the extra non-terminal+non-capitalized keys should be (3rd parameter).
 ==== caps-word-toggle[[caps-word-toggle]]
 
 There are `-toggle` variants of the `caps-word` actions.
-By default repressing `caps-word` will keep `caps-word` active.
+By default re-pressing `caps-word` will keep `caps-word` active.
 The `-toggle` variants will end `caps-word` if it is currently active,
 otherwise `caps-word` will be activate as normal.
 
-.Example
+.Example:
 [source]
 ----
 (dofalias
@@ -1522,16 +2470,44 @@ otherwise `caps-word` will be activate as normal.
 ----
 
 === unmod[[unmod]]
-<<table-of-contents,Back to ToC>>
+
+**Reference**
+
+The `unmod` action will deactivate modifier keys while outputting
+one or more defined keys.
+
+.Syntax:
+[source]
+----
+(unmod $key1 $key2 ... $keyN)
+(unmod ($mod1 $mod2 ... $modN) $key1 $key2 ... $keyN)
+----
+
+[cols="1,5"]
+|===
+| `$key`
+| A key name to output while unmodded.
+
+| `$mod`
+| By default `unmod` will deactivate all modifier keys.
+An optional list as the first parameter
+allows specfying a subset of modifiers to deactivate during the action.
+|===
+
+**Description**
 
 The `unmod` action will release all modifiers temporarily
 and send one or more keys.
 After the `unmod` key is released, the released modifiers are pressed again.
-The modifiers affected are: `lsft,rsft,lctl,rctl,lmet,rmet,lalt,ralt`.
+The affected modifiers are: `lsft,rsft,lctl,rctl,lmet,rmet,lalt,ralt`.
 
 A variant of `unmod` is `unshift` or `un⇧`.
 This action only releases the `lsft,rsft` keys.
 This can be useful for forcing unshifted keys while AltGr is still held.
+
+NOTE: In case the modifiers to be undone are not part of `dofsrc`,
+<<process-unmapped-keys>> needs to be enabled in `dofcfg` in order for their
+states to be tracked correctly.
 
 .Example:
 [source]
@@ -1548,1582 +2524,163 @@ This can be useful for forcing unshifted keys while AltGr is still held.
 )
 ----
 
-[[cmd]]
-=== cmd
-<<table-of-contents,Back to ToC>>
+A list may optionally be used as the first parameter of `unmod`.
+The list must be non-empty and must contain only modifier keys,
+which are the keys in the affected modifiers list from earlier in this document section.
 
-WARNING: This action does not work unless you use the appropriate binary
-or - if compiling yourself - the appropriate feature flag.
-Additionally you must add the <<danger-enable-cmd>> `dofcfg` option.
-
-The `+cmd+` action executes a program with arguments. It accepts one or more
-strings. The first string is the program that will be run and the following
-strings are arguments to that program. The arguments are provided to the
-program in the order written in the config file.
-Lists may also be used within `cmd`
-which you may desire to do for reuse via `dofvar`.
-Lists will be flattened such that arguments are provided to the program
-in the order written in the config file, regardless of list nesting.
-To be technical, it would be a depth-first flattening (similar to DFS).
-
-NOTE: commands are executed directly and not via a shell, so you cannot make
-use of environment variables or symbols with special meaning.
-For example `+~+` or `+$HOME+` in Linux will not be
-substituted with your home directory.
-If you want to execute with a shell program
-use the shell as the first parameter, e.g. `bash` or `powershell.exe`.
+When this list exists, the action will temporarily release only the keys listed
+rather than all modifiers.
 
 .Example:
 [source]
 ----
 (dofalias
-  cm1 (cmd rm -fr /tmp/testing)
-
-  ;; You can use bash -c and then a quoted string to execute arbitrary text in
-  ;; bash. All text within double-quotes is treated as a single string.
-  cm2 (cmd bash -c "echo hello world")
+	;; only unshift the alt keys
+	unalt-a (unmod (lalt ralt) a)
 )
 ----
 
-There is a variant of `cmd`: `cmd-output-keys`. This variant reads the output
-of the executed program and reads it as an S-expression, similarly to the
-<<macro, macro action>>. However — unlike macro — only delays, keys, chords, and
-chorded lists are supported. Other actions are not supported.
+[[fork]]
+=== fork
 
-[source]
-----
-(dofalias
-  ;; bash: type date-time as YYYY-MM-DD HH:MM
-  pdb (cmd-output-keys bash -c "date +'%F %R' | sed 's/./& /g' | sed 's/:/S-;/g' | sed 's/\(.\{20\}\)\(.*\)/\(\1 spc \2\)/'")
+**Reference**
 
-  ;; powershell: type date-time as YYYY-MM-DD HH:MM
-  pdp (cmd-output-keys powershell.exe "echo '(' (((Get-Date -Format 'yyyy-MM-dd HH:mm').toCharArray() -join ' ').insert(20, ' spc ') -replace ':','S-;') ')'")
-)
-----
-
-[[arbitrary-code]]
-=== arbitrary-code
-<<table-of-contents,Back to ToC>>
-
-The `arbitrary-code` action allows sending an arbitrary number to kanata's
-output mechanism. The press is sent when pressed, and the release sent when
-released. This action can be useful for testing keys that are not yet named or
-mapped in kanata. Please contribute findings with names and mappings, either in
-a GitHub issue or as a pull request!
-
-WARNING: This is not cross platform!
-
-WARNING: When using the Interception driver, this action is still sent over
-SendInput.
-
-[source]
-----
-(dofalias
-  ab1 (arbitrary-code 700)
-)
-----
-
-[[global-overrides]]
-== Global overrides
-<<table-of-contents,Back to ToC>>
-
-The `dofoverrides` optional configuration item allows you to create global
-key overrides, irrespective of what actions are used to generate those keys.
-It accepts pairs of lists:
-
-1. the input key list that gets replaced
-2. the output key list to replace the input keys with
-
-Both input and output lists accept 0 or more modifier keys (e.g. lctl, rsft)
-and exactly 1 non-modifier key (e.g. 1, bspc).
-
-Only zero or one `dofoverrides` is allowed in a configuration file.
-
-.Example:
-[source]
-----
-;; Swap numbers and their symbols with respect to shift
-(dofoverrides
-  (1) (lsft 1)
-  (2) (lsft 2)
-  ;; repeat for all remaining numbers
-
-  (lsft 1) (1)
-  (lsft 2) (2)
-  ;; repeat for all remaining numbers
-)
-----
-
-== Include other files[[include]]
-<<table-of-contents,Back to ToC>>
-
-The `include` optional configuration item
-allows you to include other files into the configuration.
-This configuration accepts a single string which is a file path.
-The file path can be an absolute path or a relative path.
-The path will be relative to the defined configuration file.
-
-At the time of writing, includes can only be placed at the top level.
-The included files also cannot contain includes themselves.
-
-.Example:
-----
-;; This is in the file initially read by kanata, e.g. kanata.kbd
-(include other-file.kbd)
-
-;; This is in the other file
-(dofalias
-  included-alias XX
-  ;; ...
-)
-
-;; This is in the other file
-(doflayer included-layer
-  ;; ...
-)
-----
-
-[[platform]]
-== Platform-specific configuration
-<<table-of-contents,Back to ToC>>
-
-If you put any top-level configuration item
-within a list beginning with `platform`,
-it will become a platform-specific configuration
-that is only active for the specified platforms.
+The `fork` action allows choosing between a default and an alternate action
+based on whether specific keys are active. `fork` is the equivalent of the
+basic key checks in `switch`, using none of the list logic items, i.e. virtual
+keys are not supported.
 
 .Syntax:
 [source]
 ----
-(platform (applicable-platforms) ...)
+(fork $left-action $right-action $right-trigger-keys)
 ----
 
-The valid values for applicable platforms are:
-
-- `win`
-- `winiov2`
-- `wintercept`
-- `linux`
-- `macos`
-
-.Example:
-[source]
-----
-(platform (macos)
-  ;; Only on macos, use command arrows to jump/delete words
-  ;; because command is used for so many other things
-  ;; and it's weird that these cases use alt.
-  (dofoverrides
-    (lmet bspc) (lalt bspc)
-    (lmet left) (lalt left)
-    (lmet right) (lalt right)
-  )
-)
-
-(platform (win winiov2 wintercept)
-  (dofalias run-my-script (cmd #| something involving powershell |#))
-)
-
-(platform (macos linux)
-  (dofalias run-my-script (cmd #| something involving bash |#))
-)
-----
-
-[[environment]]
-== Environment-conditional configuration
-<<table-of-contents,Back to ToC>>
-
-.Syntax:
-[source]
-----
-(environment (env-var-name env-var-value) ...)
-----
-
-The items `env-var-name` and `env-var-value` can be arbitrary strings.
-The name is the environment variable that is read
-for determining if the configuration is used or not.
-If the value of the environment variable (set only on kanata startup)
-matches `env-var-value`, the configuration is used; otherwise it is ignored.
-An empty string for `env-var-value` — `""` — will use the configuration
-if the environment variable an empty string
-and also if the variable is unset/missing entirely.
-
-.Example
-[source]
-----
-(environment (LAPTOP lp1)
-  (dofalias met @lp1met)
-)
-
-(environment (LAPTOP lp2)
-  (dofalias met @lp2met)
-)
-----
-
-.Set environment variables in the current terminal process:
-[source]
-----
-# powershell
-$env:VAR_NAME = "var_value"
-
-# bash
-VAR_NAME=var_value
-----
-
-
-[[input-chords-v2]]
-== Input chords / combos (v2)
-<<table-of-contents,Back to ToC>>
-
-You may define a single `+dofchordsv2-experimental+` configuration item.
-This enables you to define global input chord behaviour.
-One might also find this functionality called another name of "combos"
-in other projects.
-
-Input chords enables you to press two or more keys in quick succession
-to activate a different action
-than would normally be associated with those keys.
-When activating a chord, the order of presses is not important;
-when all keys belonging to a chord are pressed,
-the action activates regardless of press order.
-
-WARNING: As the name suggests, this is a new feature.
-Using this feature puts you at higher risk
-of encountering bugs or future breaking changes.
-
-The `+dofchordsv2-experimental+` feature is configured as shown below:
-
-.Syntax example
-[source]
-----
-(dofchordsv2-experimental
-  (participating-keys1) action1 timeout1 release-behaviour1 (disabled-layers1)
-    ...
-  (participating-keysN) actionN timeoutN release-behaviourN (disabled-layersN)
-)
-----
-
-The configuration is made up of 5-tuples of:
-
-[cols="1,2"]
+[cols="1,3"]
 |===
-| 1. A list of participating keys
-| These are key names you would use in `dofsrc`.
-A minimum of two keys must be defined per chord.
-The list must be unique per chord.
+| `$left-action`
+| Action to activate by default.
 
-| 2. Associated action
-| These are actions as you would configure in `doflayer` or `dofalias`.
-The action activates if all participating keys are activated
-within the timeout.
+| `$right-action`
+| Action to activate if any of `$right-trigger-keys` are active.
 
-| 3. Timeout to fulfill the chord
-| The time (unit: milliseconds) within which,
-if all participating keys are pressed,
-the chord action will activate;
-otherwise the key presses are handled by the active layer.
-The time begins when the first participant is pressed.
-
-| 4. Release behaviour
-| This must be either `first-release` or `all-released`;
-`first-release` means the chord action will be released
-when the first participant is released,
-while `all-released` means the chord action will be released
-only when all of the participants have been released.
-
-|5. Disabled layers
-| A list of layer names on which this chord is disabled.
+| `$right-trigger-keys`
+| List of keys that, if active when fork activates,
+causes `$right-action` to happen in place of `$left-action`.
 |===
 
-Input chords have a related `dofcfg` item: <<chords-v2-min-idle-experimental>>.
-When any non-chord activation happens,
-a timeout begins with duration configured by
-`chords-v2-min-idle-experimental` (unit: milliseconds).
-Until this timeout expires, all inputs will immediately skip
-chords processing and be processed by the active layer.
-
-IMPORTANT: When opting into input chords v2,
-you must enable `concurrent-tap-hold`.
-This is enforced for a more responsive `tap-hold` experience when
-activated by a chord.
-
-.Example
-[source]
-----
-(dofcfg concurrent-tap-hold yes)
-(dofchordsv2-experimental
-  (a s)    c                200 last-release  (non-chord-layer)
-  (a s d) (macro h e l l o) 250 first-release (non-chord-layer)
-  (s d f) (macro b y e)     400 first-release (non-chord-layer)
-)
-----
-
-
-NOTE: Also see <<input-chords,v1 chords>>,
-which are configured differently and can be defined per-layer.
-
-[[optional-dofcfg-options]]
-== dofcfg options
-
-[[danger-enable-cmd]]
-=== danger-enable-cmd
-<<table-of-contents,Back to ToC>>
-
-This option can be used to enable the `cmd` action in your configuration. The
-`+cmd+` action allows kanata to execute programs with arguments passed to them.
-
-This requires using a kanata program that is compiled with the `cmd` action
-enabled. The reason for this is so that if you choose to, there is no way for
-kanata to execute arbitrary programs even if you download some random
-configuration from the internet.
-
-This configuration is disabled by default and can be enabled by giving it the
-value `yes`.
-
-.Example:
-[source]
-----
-(dofcfg
-  danger-enable-cmd yes
-)
-----
-
-[[sequence-timeout]]
-=== sequence-timeout
-<<table-of-contents,Back to ToC>>
-
-This option customizes the key sequence timeout (unit: ms). Its default value
-is 1000. The purpose of this item is explained in <<sequences>>.
-
-.Example:
-[source]
-----
-(dofcfg
-  sequence-timeout 2000
-)
-----
-
-[[sequence-input-mode]]
-=== sequence-input-mode
-<<table-of-contents,Back to ToC>>
-
-This option customizes the key sequence input mode. Its default value when not
-configured is `hidden-suppressed`.
-
-The options are:
-
-- `visible-backspaced`: types sequence characters as they are inputted. The
-  typed characters will be erased with backspaces for a valid sequence termination.
-- `hidden-suppressed`: hides sequence characters as they are typed. Does not
-  output the hidden characters for an invalid sequence termination.
-- `hidden-delay-type`: hides sequence characters as they are typed. Outputs the
-  hidden characters for an invalid sequence termination either after a
-  timeout or after a non-sequence key is typed.
-
-For `visible-backspaced` and `hidden-delay-type`, a sequence leader input will
-be ignored if a sequence is already active. For historical reasons, and in case
-it is desired behaviour, a sequence leader input using `hidden-suppressed` will
-reset the key sequence.
-
-See <<sequences>> for more about sequences.
-
-.Example:
-[source]
-----
-(dofcfg
-  sequence-input-mode visible-backspaced
-)
-----
-
-
-[[sequence-backtrack-modcancel]]
-=== sequence-backtrack-modcancel
-<<table-of-contents,Back to ToC>>
-
-This option customizes the behaviour of key sequences
-when modifiers are used.
-The default is `yes` and can be overridden to `no` if desired.
-
-Setting it to `yes` allows both `fk1` and `fk2` to be activated
-in the following configuration, but with `no`,
-`fk1` will be impossible to activate
-
-----
-(dofseq
-  fk1 (lsft a b)
-  fk2 (S-(c d))
-)
-----
-
-See <<sequences>> for more about sequences and
-https://github.com/jtroo/kanata/blob/main/docs/sequence-adding-chords-ideas.md[this document]
-for more context about this specific configuration.
-
-.Example:
-[source]
-----
-(dofcfg
-  sequence-backtrack-modcancel no
-)
-----
-
-[[log-layer-changes]]
-=== log-layer-changes
-<<table-of-contents,Back to ToC>>
-
-By default, kanata will log layer changes. However, logging has some processing
-overhead. If you do not care for the logging, you can choose to disable it.
-
-.Example:
-[source]
-----
-(dofcfg
-  log-layer-changes no
-)
-----
-
-If `+--log-layer-changes+` is passed as a command line argument,
-a `no` in the configuration file will be overridden
-and layer changes will again be logged.
-This flag can be helpful when testing new configuration changes
-while keeping the default behaviour as "no logging" to save on processing,
-so that the `dofcfg` item does not need to be adjusted back and forth
-when experimenting vs. stable usage.
-
-[[delegate-to-first-layer]]
-=== delegate-to-first-layer
-<<table-of-contents,Back to ToC>>
-
-
-By default, transparent keys on layers
-will delegate to the corresponding dofsrc key
-when found on a layer activated by `layer-switch`.
-
-This config entry changes the behaviour
-to delegate to the action in the same position on the first layer defined
-in the configuration, which is the active layer on startup.
-
-For more context, see https://github.com/jtroo/kanata/issues/435.
-
-.Example:
-[source]
-----
-(dofcfg
-  delegate-to-first-layer yes
-)
-----
-
-
-[[movemouse-inherit-accel-state]]
-=== movemouse-inherit-accel-state
-<<table-of-contents,Back to ToC>>
-
-By default `movemouse-accel` actions will track the acceleration
-state for vertical and horizontal axes separately.
-
-When this setting is enabled, `movemouse-accel` will behave exactly like mouse movements in https://qmk.fm[QMK],
-i.e. the acceleration state of new mouse
-movement actions will be inherited if others are already being pressed.
-
-.Example:
-[source]
-----
-(dofcfg
-  movemouse-inherit-accel-state yes
-)
-----
-
-[[movemouse-smooth-diagonals]]
-=== movemouse-smooth-diagonals
-<<table-of-contents,Back to ToC>>
-
-By default, mouse movements move one direction at a time
-and vertical/horizontal movements are on independent timers.
-
-This can result in non-smooth diagonals when drawing a line in some app.
-This option adds a small imperceptible amount of latency to
-synchronize the mouse movements.
-
-.Example:
-[source]
-----
-(dofcfg
-  movemouse-smooth-diagonals yes
-)
-----
-
-=== dynamic-macro-max-presses [[dynamic-macro-max-presses]]
-<<table-of-contents,Back to ToC>>
-
-This configuration allows you to customize the length limit on dynamic macros.
-The default length limit is 128 keys.
-
-.Example:
-[source]
-----
-(dofcfg
-  dynamic-macro-max-presses 1000
-)
-----
-
-=== concurrent-tap-hold [[concurrent-tap-hold]]
-This configuration makes multiple tap-hold actions
-that are activated near in time expire their timeout quicker.
-By default this is disabled.
-When disabled, the timeout for a following tap-hold
-will start from 0ms **after** the previous tap-hold expires.
-When enabled, the timeout will start
-as soon as the tap-hold action is pressed
-even if a previous tap-hold action is still held and has not expired.
-
-.Example:
-[source]
-----
-(dofcfg
-  concurrent-tap-hold yes
-)
-----
-
-[[block-unmapped-keys]]
-=== block-unmapped-keys
-<<table-of-contents,Back to ToC>>
-
-If you desire to use only a subset of your keyboard
-you can use `block-unmapped-keys` to make every key
-other than those that exist in `dofsrc` a no-op.
-
-NOTE: this only functions correctly if you also set
-<<process-unmapped-keys>> to yes.
-
-.Example:
-[source]
-----
-(dofcfg
-  block-unmapped-keys yes
-)
-----
-
-[[rapid-event-delay]]
-=== rapid-event-delay
-<<table-of-contents,Back to ToC>>
-
-This configuration applies to the following events:
-
-* the release of one-shot-press activation
-* the release of the tapped key in a tap-hold activation
-
-These events are delayed the defined number of milliseconds (approximate).
-The default value is 5.
-
-While the release is delayed, further processing of inputs is also paused.
-This means that there will be a minor input latency impact in the mentioned scenarios.
-Since 5ms is 1 frame for a 200 Hz refresh rate,
-in most scenarios this will not be perceptible.
-
-The reason for this configuration existing is that some environments
-do not process the scenarios correctly due to the rapidity of the release.
-Kanata does send the events in the correct order,
-so the fault is more in the environment,
-but kanata provides a workaround anyway.
-
-If you are negatively impacted by the latency increase of these events
-and your environment is not impacted by increased rapidity,
-you can set reduce the value to a number 0 to 4.
-
-.Example:
-[source]
-----
-(dofcfg
-  ;; If your environment is particularly buggy, might need to delay even more
-  rapid-event-delay 20
-)
-----
-
-[[chords-v2-min-idle-experimental]]
-=== chords-v2-min-idle-experimental
-<<table-of-contents,Back to ToC>>
-
-This configuration affects the timer during which chords processing is disabled.
-NOTE: For more info, see <<input-chords-v2>>.
-
-The default (and minimum) value is `5` and the unit is milliseconds.
-
-.Example:
-[source]
-----
-(dofcfg
-  chords-v2-min-idle-experimental 200
-)
-----
-
-[[linux-only-linux-dev]]
-=== Linux only: linux-dev
-<<table-of-contents,Back to ToC>>
-By default, kanata will try to detect which input devices are keyboards and try
-to intercept them all. However, you may specify exact keyboard devices from the
-`/dev/input` directories using the `linux-dev` configuration.
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-dev /dev/input/by-path/platform-i8042-serio-0-event-kbd
-)
-----
-
-If you want to specify multiple keyboards, you can separate the paths with a
-colon `+:+`.
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-dev /dev/input/dev1:/dev/input/dev2
-)
-----
-
-Due to using the colon to separate devices, if you have a device with colons in
-its file name, you must escape those colons with backslashes:
-
-[source]
-----
-(dofcfg
-  linux-dev /dev/input/path-to\:device
-)
-----
-
-Alternatively, you can use list syntax, where both backslashes and colons
-are parsed literally. List items are separated by spaces or newlines.
-Using quotation marks for each item is optional, and only required if an
-item contains spaces.
-
-[source]
-----
-(dofcfg
-  linux-dev (
-    /dev/input/path:to:device
-    "/dev/input/path to device"
-  )
-)
-----
-
-[[linux-only-linux-dev-names-include]]
-=== Linux only: linux-dev-names-include
-<<table-of-contents,Back to ToC>>
-
-In the case that `linux-dev` is omitted,
-this option defines a list of device names that should be included.
-Device names that do not exist in the list will be ignored.
-This option is parsed identically to `linux-dev`.
-
-Kanata will print device names on startup with log lines that look like below:
-
-----
-registering /dev/input/eventX: "Name goes here"
-----
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-dev-names-include (
-    "Device name 1"
-    "Device name 2"
-  )
-)
-----
-
-[[linux-only-linux-dev-names-exclude]]
-=== Linux only: linux-dev-names-exclude
-<<table-of-contents,Back to ToC>>
-
-In the case that `linux-dev` is omitted,
-this option defines a list of device names that should be excluded.
-This option is parsed identically to `linux-dev`.
-
-The `linux-dev-names-include` and `linux-dev-names-exclude` options
-are not mutually exclusive
-but in practice it probably only makes sense to use one and not both.
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-dev-names-exclude (
-    "Device Name 1"
-    "Device Name 2"
-  )
-)
-----
-
-[[linux-only-linux-continue-if-no-devs-found]]
-=== Linux only: linux-continue-if-no-devs-found
-<<table-of-contents,Back to ToC>>
-
-By default, kanata will crash if no input devices are found. You can change
-this behaviour by setting `linux-continue-if-no-devs-found`.
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-continue-if-no-devs-found yes
-)
-----
-
-[[linux-only-linux-unicode-u-code]]
-=== Linux only: linux-unicode-u-code
-<<table-of-contents,Back to ToC>>
-
-Unicode on Linux works by pressing Ctrl+Shift+U, typing the unicode hex value,
-then pressing Enter. However, if you do remapping in userspace, e.g. via
-xmodmap/xkb, the keycode "U" that kanata outputs may not become a keysym "u"
-after the userspace remapping. This will be likely if you use non-US,
-non-European keyboards on top of kanata. For unicode to work, kanata needs to
-use the keycode that outputs the keysym "u", which might not be the keycode
-"U".
-
-You can use `evtest` or `kanata --debug`, set your userspace key remapping,
-then press the key that outputs the keysym "u" to see which underlying keycode
-is sent. Then you can use this configuration to change kanata's behaviour.
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-unicode-u-code v
-)
-----
-
-[[linux-only-linux-unicode-termination]]
-=== Linux only: linux-unicode-termination
-<<table-of-contents,Back to ToC>>
-
-Unicode on Linux terminates with the Enter key by default. This may not work in
-some applications. The termination is configurable with the following options:
-
-- `enter`
-- `space`
-- `enter-space`
-- `space-enter`
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-unicode-termination space
-)
-----
-
-=== Linux only: linux-x11-repeat-delay-rate[[linux-only-x11-repeat-rate]]
-<<table-of-contents,Back to ToC>>
-
-On Linux, you can tell kanata to run `xset r rate <delay> <rate>`
-on startup and on live reload
-via the configuration item `linux-only-x11-repeat-rate`.
-This takes two numbers separated by a comma.
-The first number is the delay in ms
-and the second number is the repeat rate in repeats/second.
-
-This configuration item does not affect Wayland or no-desktop environments.
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-x11-repeat-delay-rate 400,50
-)
-----
-
-[[linux-only-linux-use-trackpoint-property]]
-=== Linux only: linux-use-trackpoint-property
-<<table-of-contents,Back to ToC>>
-
-On linux, you can ask kanata to label itself as a trackpoint. This has several
-effects on libinput including enabling middle mouse button scrolling and using a
-different acceleration curve. Otherwise, a trackpoint intercepted by kanata may
-not behave as expected.
-
-If using this feature, it is recommended to filter out any non-trackpoint
-pointing devices using <<linux-only-linux-dev-names-include>>,
-<<linux-only-linux-dev-names-exclude>> or <<linux-only-linux-dev>> to avoid
-changing their behavior as well.
-
-.Example:
-[source]
-----
-(dofcfg
-  linux-use-trackpoint-property yes
-)
-----
-
-[[macos-only-macos-dev-names-include]]
-=== macOS only: macos-dev-names-include
-<<table-of-contents,Back to ToC>>
-
-This option defines a list of device names that should be included.
-By default, kanata will try to detect which input devices are keyboards and try
-to intercept them all. However, you may specify exact keyboard devices to intercept
-using the `macos-dev-names-include` configuration.
-Device names that do not exist in the list will be ignored.
-This option is parsed identically to `linux-dev`.
-
-Use `kanata -l` or `kanata --list` to list the available keyboards.
-
-.Example:
-[source]
-----
-(dofcfg
-  macos-dev-names-include (
-    "Device name 1"
-    "Device name 2"
-  )
-)
-----
-
-[[windows-only-windows-altgr]]
-=== Windows only: windows-altgr
-<<table-of-contents,Back to ToC>>
-
-There is an option for Windows to help mitigate the strange behaviour of AltGr
-(ralt) if you're using that key in your dofsrc. This is applicable for many
-non-US layouts. You can use one of the listed values to change what kanata does
-with the key:
-
-* `cancel-lctl-press`
-** This will remove the `lctl` press that is generated alonside `ralt`
-* `add-lctl-release`
-** This adds an `lctl` release when `ralt` is released
-
-.Example:
-[source]
-----
-(dofcfg
-  windows-altgr add-lctl-release
-)
-----
-
-For more context, see: https://github.com/jtroo/kanata/issues/55.
-
-NOTE: Even with these workarounds, putting `+lctl+`+`+ralt+` in your dofsrc may not
-work properly with other applications that also use keyboard interception.
-Known application with issues: GWSL/VcXsrv
-
-=== Windows only: windows-interception-mouse-hwid[[windows-only-windows-interception-mouse-hwid]]
-<<table-of-contents,Back to ToC>>
-
-This dofcfg item allows you to intercept mouse buttons for a specific mouse device.
-This only works with the Interception driver
-(the -wintercept variants of the release binaries).
-
-The original use case for this is for laptops such as a Thinkpad,
-which have mouse buttons that may be desirable to activate kanata actions with.
-
-To know what numbers to put into the string, you can run the variant with this
-dofcfg item defined with any numbers. Then when a button is first pressed on
-the mouse device, kanata will print its hwid in the log; you can then
-copy-paste that into this configuration entry. If this dofcfg item is not
-defined, the log will not print.
-
-Hwids in Kanata are byte array representations of a concatenation of the
-ASCII hardware ids, which can be seen in Device Manager on Windows. As such,
-they are an arbitrary length and can be very long.
-
-https://github.com/jtroo/kanata/issues/108[Relevant issue].
-
-.Example:
-[source]
-----
-(dofcfg
-  windows-interception-mouse-hwid "70, 0, 60, 0"
-)
-----
-
-=== Windows only: windows-interception-mouse-hwids[[windows-only-windows-interception-mouse-hwids]]
-<<table-of-contents,Back to ToC>>
-
-This item has a similar purpose as the singular version documented above,
-but is instead a list of strings that allows multiple mice to be intercepted.
-
-If both the singular and list items are used,
-the singular version will behave as if added to the list.
-
-.Example:
-[source]
-----
-(dofcfg
-  windows-interception-mouse-hwids (
-    "70, 0, 60, 0"
-    "71, 0, 62, 0"
-  )
-)
-----
-
-=== Windows only: windows-interception-keyboard-hwids[[windows-only-windows-interception-keyboard-hwids]]
-<<table-of-contents,Back to ToC>>
-
-This dofcfg item allows you to intercept only specific keyboards.
-Its value must be a list of strings
-with each string representing one hardware ID.
-
-To know what numbers to put into the string,
-you can run the variant with this dofcfg item empty.
-Then when a button is first pressed on the keyboard,
-kanata will print its hwid in the log.
-You can then copy-paste that into this configuration entry.
-If this dofcfg item is not defined, the log will not print.
-
-Hwids in Kanata are byte array representations of a concatenation of the
-ASCII hardware ids, which can be seen in Device Manager on Windows. As such,
-they are an arbitrary length and can be very long.
-
-.Example:
-[source]
-----
-(dofcfg
-  windows-interception-keyboard-hwids (
-    "70, 0, 60, 0"
-    "71, 72, 73, 74"
-  )
-)
-----
-
-[[windows-only-tray-icon]]
-=== Windows only: tray-icon
-<<table-of-contents,Back to ToC>>
-
-Show a custom tray icon file for a <<windows-only-win-tray>> gui-enabled build of kanata on Windows.
-Accepts either the full path (including the file name with an extension) to the icon file
-or just the file name, which is then searched in the following locations:
-
-* Default parent folders:
-** config file's, executable's
-** env vars: `XDG_CONFIG_HOME`, `APPDATA` (`C:\Users\<Name>\AppData\Roaming`), `USERPROFILE` `/.config` (`C:\Users\<Name>\.config`)
-* Default config subfolders: `kanata` `kanata-tray`
-* Default image subfolders (optional): `icon` `img` `icons`
-* Supported image file formats: `ico` `jpg` `jpeg` `png` `bmp` `dds` `tiff`
-
-If not specified, tries to load any icon file from the same locations with the name matching
-config name with extension replaced by one of the supported ones.
-See https://github.com/jtroo/kanata/blob/main/cfg_samples/tray-icon/tray-icon.kbd[example config] for more details.
-
-.Example:
-[source]
-----
-;; in a config file C:\Users\<U>\AppData\Roaming\kanata\kanata.kbd
-(dofcfg
-  tray-icon base.png ;; will load C:\Users\<U>\AppData\Roaming\kanata\base.png
-)
-----
-
-[[windows-only-icon-match-layer-name]]
-=== Windows only: icon-match-layer-name
-<<table-of-contents,Back to ToC>>
-
-When enabled, attempt to switch to a custom tray icon that matches the name of the active layer
-if the layer doesn't specify an explicit icon. If no icon file is found, the default icon will be used (see <<windows-only-tray-icon>>).
-File search rules are the same as in <<windows-only-tray-icon>>. Defaults to true.
-See https://github.com/jtroo/kanata/blob/main/cfg_samples/tray-icon/tray-icon.kbd[example config] for more details.
-
-[[windows-only-tooltip-layer-changes]]
-=== Windows only: tooltip-layer-changes
-<<table-of-contents,Back to ToC>>
-
-Show a custom layer icon near the mouse pointer position. Defaults to false. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[windows-only-tooltip-show-blank]]
-=== Windows only: tooltip-show-blank
-<<table-of-contents,Back to ToC>>
-
-Show a blank square when instead of an icon if a layer isn't configured to have one. Defaults to false. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[windows-only-tooltip-no-base]]
-=== Windows only: tooltip-no-base
-<<table-of-contents,Back to ToC>>
-
-Don't show a tooltip layer icon for the base layer (1st doflayer). Defaults to true. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[windows-only-tooltip-duration]]
-=== Windows only: tooltip-duration
-<<table-of-contents,Back to ToC>>
-
-Set duration (in ms) for showing a custom layer icon near the mouse pointer position. 0 to never hide. Defaults to 500. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[windows-only-tooltip-size]]
-=== Windows only: tooltip-size
-<<table-of-contents,Back to ToC>>
-
-Set the size (comma-separated Width,Height without spaces) for a custom layer icon near the mouse pointer position. Defaults to 24,24. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[windows-only-notify-cfg-reload]]
-=== Windows only: notify-cfg-reload
-<<table-of-contents,Back to ToC>>
-
-Show system notification message on config reload. Defaults to true. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[windows-only-notify-cfg-reload-silent]]
-=== Windows only: notify-cfg-reload-silent
-<<table-of-contents,Back to ToC>>
-
-Disable sound for the system notification message on config reload. Defaults to false. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[windows-only-notify-error]]
-=== Windows only: notify-error
-<<table-of-contents,Back to ToC>>
-
-Show system notification message on kanata errors. Defaults to true. Requires <<windows-only-win-tray>> gui-enabled build.
-
-[[using-multiple-dofcfg-options]]
-=== Using multiple dofcfg options
-<<table-of-contents,Back to ToC>>
-
-The `dofcfg` entry is treated as a list with pairs of strings. For example:
-
-[source]
-----
-(dofcfg a 1 b 2)
-----
-
-This will be treated as configuration `a` having value `1` and configuration
-`b` having value `2`.
-
-An example dofcfg containing many of the options is shown below. It should be
-noted options that are Linux-only, Windows-only, or macOS-only will be ignored when used on
-a non-applicable operating system.
-
-[source]
-----
-;; Don't actually use this exact configuration,
-;; it's almost certainly not what you want.
-(dofcfg
-  process-unmapped-keys yes
-  danger-enable-cmd yes
-  sequence-timeout 2000
-  sequence-input-mode visible-backspaced
-  sequence-backtrack-modcancel no
-  log-layer-changes no
-  delegate-to-first-layer yes
-  movemouse-inherit-accel-state yes
-  movemouse-smooth-diagonals yes
-  dynamic-macro-max-presses 1000
-  linux-dev (/dev/input/dev1 /dev/input/dev2)
-  linux-dev-names-include ("Name 1" "Name 2")
-  linux-dev-names-exclude ("Name 3" "Name 4")
-  linux-continue-if-no-devs-found yes
-  linux-unicode-u-code v
-  linux-unicode-termination space
-  linux-x11-repeat-delay-rate 400,50
-  windows-altgr add-lctl-release
-  windows-interception-mouse-hwid "70, 0, 60, 0"
-)
-----
-
-== Advanced/weird features[[advanced-weird-features]]
-
-[[fake-keys]]
-=== Virtual keys (a.k.a. fake keys)
-<<table-of-contents,Back to ToC>>
-
-You can define up to 767 virtual keys.
-These keys are not directly mapped to any physical key presses or releases.
-Virtual keys can be activated via special actions:
-
-* `(on-press    <action> <virtual key name>)` or `on↓`:
-Activate a virtual key action when pressing the associated input key.
-* `(on-release  <action> <virtual key name>)` or `on↑`:
-Activate a virtual key action when releasing the associated input key.
-* `(on-idle <milliseconds> <action> <virtual key name>)`:
-Activate a virtual key action when kanata has been idle
-for at least `idle time` milliseconds.
-
-The `<action>` parameter can be one of:
-
-* `tap-virtualkey     | tap-vkey`:
-Press and release the virtual key. If the key is already pressed, this only releases it.
-* `press-virtualkey   | press-vkey`:
-Press the virtual key. It will not be released until another action triggers a release or tap.
-If the key is already pressed, this does nothing.
-* `release-virtualkey | release-vkey`:
-Release the virtual key. If it is not already pressed, this does nothing.
-* `toggle-virtualkey  | toggle-vkey`:
-Press the virtual key if it is not already pressed, otherwise release it.
-
-A virtual key can be defined in a `defvirtualkeys` configuration entry.
-Configuring this entry is similar to `+dofalias+`,
-but you cannot make use of aliases inside to shorten an action.
-You can refer to previously defined virtual keys.
-
-Expanding on the `on-idle` action some more,
-the wording that "kanata" has been idle is important.
-Even if the keyboard is idle, kanata may not yet be idle.
-For example, if a long-running macro is playing,
-or kanata is waiting for the timeout of actions such as `caps-word` or `tap-dance`,
-kanata is not yet idle, and the tick count for the `<idle time>` parameter
-will not yet be counting even if you no longer have any keyboard keys pressed.
-
-.Example:
-[source]
-----
-(defvirtualkeys
-  ;; Define some virtual keys that perform modifier actions
-  ctl lctl
-  sft lsft
-  met lmet
-  alt lalt
-
-  ;; A virtual key that toggles all modifier virtual keys above
-  tal (multi
-        (on-press toggle-virtualkey ctl)
-        (on-press toggle-virtualkey sft)
-        (on-press toggle-virtualkey met)
-        (on-press toggle-virtualkey alt)
-      )
-
-  ;; Virtual key that activates a macro
-  vkmacro (macro h e l l o spc w o r l d)
-)
-
-(dofalias
-  psf (on-press press-virtualkey   sft)
-  rsf (on-press release-virtualkey sft)
-
-  tal (on-press tap-vkey tal)
-  mac (on-press tap-vkey vkmacro)
-
-  isf (on-idle 1000 tap-vkey sft)
-)
-
-(doflayer use-fake-keys
-  @psf @rsf @tal @mac a s d f @isf
-)
-----
-
-.Older fake keys documentation
-[%collapsible]
-====
-The older configuration style of fake keys are still supported
-but the new style is preferred due to (hopefully) clearer naming.
-
-Fake keys can be defined inside of `doffakekeys`.
-
-The actions are:
-
-* `+(on-press-fakekey <fake key name> <action>)+` or `on↓fakekey`: Activate a fake key
-  action when pressing the key mapped to this action.
-* `+(on-release-fakekey <fake key name> <action>)+` or `on↑fakekey`: Activate a fake key
-  action when releasing the key mapped to this action.
-* `+(on-idle-fakekey <fake key name> <action> <idle time>)+`:
-  Activate a fake key action when kanata has been idle
-  for at least `idle time` milliseconds.
-
-The aforementioned `+<key action>+` can be one of four values:
-
-* `+press+`: Press the fake key. It will not be released until another action
-  triggers a release or tap.
-* `+release+`: Release the fake key. If it's not already pressed, this does nothing.
-* `+tap+`: Press and release the fake key. If it's already pressed, this only releases it.
-* `+toggle+`: Press the fake key if not already pressed, otherwise release it.
-
-.Example:
-[source]
-----
-(doffakekeys
-  ctl lctl
-  sft lsft
-  met lmet
-  alt lalt
-
-  ;; Press all modifiers
-  pal (multi
-        (on-press fakekey ctl press)
-        (on-press-fakekey sft press)
-        (on-press-fakekey met press)
-        (on-press-fakekey alt press)
-      )
-
-  ;; Release all modifiers
-  ral (multi
-        (on-press-fakekey ctl release)
-        (on-press-fakekey sft release)
-        (on-press-fakekey met release)
-        (on-press-fakekey alt release)
-      )
-)
-
-(dofalias
-  psf (on-press-fakekey sft press)
-  rsf (on-press-fakekey sft release)
-
-  pal (on-press-fakekey pal tap)
-  ral (on-press-fakekey ral tap)
-
-  isf (on-idle-fakekey sft tap 1000)
-)
-
-(doflayer use-fake-keys
-  @psf @rsf @pal @ral a s d f @isf
-)
-----
-
-====
-
-For more context, you can read the
-https://github.com/jtroo/kanata/issues/80[issue that sparked the creation of virtual keys].
-
-Something notable about virtual keys is that they don't always interrupt the state
-of an active `+tap-dance-eager+`. If a `macro` action is assigned to a fake
-key, this won't interrupt a tap dance. However, most other action types,
-notably a "normal" key action like `+rsft+` will still interrupt a tap dance.
-
-[[sequences]]
-=== Sequences
-<<table-of-contents,Back to ToC>>
-
-The `+sldr+` action makes kanata go into "sequence" mode. The action name is
-short for "sequence leader". This comes from Vim which has the concept of a configurable
-sequence leader key. When in sequence mode, keys are not typed
-(<<sequence-input-mode,by default>>)
-but are saved until one of the following happens:
-
-* A key is typed that does not match any sequence
-* `+sequence-timeout+` milliseconds elapses since the most recent key press
-
-Sequences are configured similarly to `+defvirtualkeys+`. The first parameter of a
-pair must be a defined virtual key name. The second parameter is a list of keys
-that will activate a virtual key tap when typed in the defined order. More
-precisely, the action triggered is:
-
-`+(on-press tap-vkey <virtual key name>)+`
-
-.Example:
-[source]
-----
-(dofseq git-status (g s t))
-(defvirtualkeys git-status (macro g i t spc s t a t u s))
-(dofalias rcl (tap-hold-release 200 200 sldr rctl))
-
-(dofseq
-    dotcom (. S-3)
-    dotorg (. S-4)
-
-    ;;     The shifted letters in parentheses means a single press of lsft
-    ;;     must remain held while both h and then s are pressed.
-    ;;     This is not the same as S-h S-s, which means that the lsft key
-    ;;     must be released and repressed between the h and s presses.
-    https (S-(h s))
-)
-(defvirtualkeys
-    dotcom (macro . c o m)
-    dotorg (macro . o r g)
-    https (macro h t t p s S-; / /)
-)
-----
-
-There are 10 special keys with names `nop0-nop9` which kanata treats specially.
-Kanata will never send OS events for these keys
-but they can still participate in sequences.
-
-See an example of using the nop keys
-alongside templates to define sequences below.
-
-.Example:
-[source]
-----
-(dofsrc f7   f8   f9   f10)
-(doflayer base
-        sldr nop0 nop1 nop2)
-(deftemplate seq (vk-name input-keys output-action)
-        sldr(defvirtualkeys $vk-name $output-action)
-        sldr(dofseq $vk-name $input-keys)
-)
-;; template-expand has a shortened form: t!
-(t! seq dotcom (nop0 nop1) (macro . c o m))
-(t! seq dotorg (nop0 nop2) (macro . o r g))
-----
-
-If 10 special nop keys do not seem sufficient,
-you can get creative with your sequences and treat some as a prefix modifier.
-For example, you can get 28 "keys" by treating `nop0-nop6` as normal
-while treating `nop7-nop9` as prefixes:
-
-.Example:
-[source]
-----
-(dofalias
-  nop0 nop0
-  ;; ...
-  nop6 nop6
-  nop7 (macro nop7 nop0)
-  ;; ...
-  nop13 (macro nop7 nop6)
-  nop14 (macro nop8 nop0)
-  ;; ...
-  nop20 (macro nop8 nop6)
-  nop21 (macro nop9 nop0)
-  ;; ...
-  nop27 (macro nop9 nop6)
-)
-----
-
-==== Overlapping keys in any order
-
-Within the key list of `dofseq` configuration items,
-the special `O-` list prefix can be used to denote a set of keys that must
-all be pressed before any are released in order to match the sequence.
-
-For an example, `O-(a b c)` is equivalent to `O-(c b a)`.
-
-.Example:
-[source]
-----
-(defvirtualkey hello (macro h (unshift e l) 5 (unshift l o)))
-(dofseq hello (O-(h l o)))
-----
-
-WARNING: The way that sequences implements this functionality behind the scenes
-is by generating a sequence for every permutation of the overlapping keys.
-This can make kanata use up a lot of memory.
-Due to this, the maximum keys allowed in a given `O-(...)` list is 6,
-but you are still permitted to add more to the sequence,
-including more `O-(...)` lists.
-Doing the above can balloon kanata's memory consumption.
-
-.Sample of more advanced usage
-[%collapsible]
-====
-
-The configuration below showcases context-dependent chording
-with auto-space and auto-deleted spaces from typing punctuation.
-
-For example, chording `(d a y)` and then `(t u e)` will output
-`Tuesday`, while chording `(t u e)` by itself does nothing.
-
-.Example configuration:
-[source]
-----
-(dofsrc f1)
-(doflayer base lrld)
-(dofcfg process-unmapped-keys yes
-	sequence-input-mode visible-backspaced
-	concurrent-tap-hold true)
-(deftemplate seq (vk-name in out)
-	(defvirtualkeys $vk-name $out)
-	(dofseq $vk-name $in))
-
-(defvirtualkeys rls-sft (multi (release-key lsft)(release-key rsft)))
-(dofvar rls-sft (on-press tap-vkey rls-sft))
-(deftemplate rls-sft () $rls-sft 5)
-
-(dofchordsv2-experimental
-	(d a y) (macro sldr d (t! rls-sft) a y spc nop0) 200 first-release ()
-	(h l o) (macro h (t! rls-sft) e l l o sldr spc nop0) 200 first-release ()
-)
-(t! seq Monday (d a y spc nop0 O-(m o n)) (macro S-m $rls-sft o n d a y nop9 sldr spc nop0))
-(t! seq Tuesday (d a y spc nop0 O-(t u e)) (macro S-t $rls-sft u e s d a y nop9 sldr spc nop0))
-(t! seq DelSpace_. (spc nop0 .) (macro .))
-(t! seq DelSpace_; (spc nop0 ;) (macro ;))
-----
-
-.Try using the above configuration to type the text:
-[source]
-----
-day;
-Day;
-Tuesday.
-day hello
-hello day
-Hello day.
-hello Tuesday
-Hello Monday;
-----
-
-====
-
-==== Override the global timeout and input mode
-
-An alternative to using `sldr` is the `sequence` action.
-The syntax is `(sequence <timeout>)`.
-This enters sequence mode with a sequence timeout
-different from the globally configured one.
-
-The `sequence` action can also be called with a second parameter.
-The second parameter is an override for `sequence-input-mode`:
-
-----
-(sequence <timeout> <input-mode>)
-----
-
-
-.Example:
-[source]
-----
-;; Enter sequence mode and input . with a timeout of 250
-(dofalias dot-sequence (macro (sequence 250) 10 .))
-
-;; Enter sequence mode and input . with a timeout of 250 and using hidden-delay-type
-(dofalias dot-sequence (macro (sequence 250 hidden-delay-type) 10 .))
-----
-
-==== More about sequences
-
-For more context about sequences, you can read the
-https://github.com/jtroo/kanata/issues/97[design and motivation of sequences].
-You may also be interested in
-https://github.com/jtroo/kanata/blob/main/docs/sequence-adding-chords-ideas.md[the document describing chords in sequences]
-to read about how chords in sequences behave.
-
-[[input-chords]]
-=== Input chords
-<<table-of-contents,Back to ToC>>
-
-Not to be confused with <<output-chords-combos,output chords>>, `+chord+`
-actions allow you to perform various actions based on which specific combination
-of input keys are pressed together. Such an unordered combination of keys
-is called a "chord". Each chord can perform a different action, allowing you
-to bind up to `+2^n - 1+` different actions to just `+n+` keys.
-
-Input chords are configured similarly to `+dofalias+` with two extra parameters
-at the beginning of each `+dofchords+` group: the name of the group and a
-timeout value after which a chord triggers if it isn't triggered by a key release
-or press of a non-chord key before the timeout expires.
-
-[source]
-----
-(dofsrc a b c)
-(doflayer default
-  @cha @chb @chc
-)
-
-(dofalias
-  cha (chord example a)
-  chb (chord example b)
-  chc (chord example c)
-)
-
-(dofchords example 500
-  (a      ) a
-  (   b   ) b
-  (a     c) C-v
-  (a  b  c) @three
-)
-----
-
-The first item of each pair specifies the keys that make up a given chord.
-The second item of each pair is the action to be executed when the given chord
-is pressed and may be any regular or advanced action, including aliases. It
-currently cannot however contain another `+chord+` action.
-
-Note that unlike with `+dofseq+`, these keys do not directly correspond to real
-keys and are merely arbitrary labels that make sense within the context of the
-chord.
-They are mapped to real keys in layers by configuring the key in the layer to
-map to a `+(chord name key)+` action where `+name+` is the name of the chords
-group (above `+example+`) and `+key+` is one of these arbitrary labels.
-
-It is perfectly valid to nest these `+chord+` actions that enter "chording mode"
-within other actions like `+tap-dance+` and that will work as one would expect.
-However, this only applies to the first key used to enter "chording mode".
-Once "chording mode" is active, all other keys will be directly handled by
-"chording mode" with no regard for wrapper actions; e.g. if a key is pressed
-and it maps to a tap-hold with a chord as the hold action within, that chord
-key will immediately activate instead of the key needing to be held for the
-timeout period.
-
-**Release behaviour**
-
-For single key actions and output chords — like `lctl` or `S-tab` —
-and for `layer-while-held`,
-an input chord will release the action only when all keys that are part of
-the input chord have been released.
-In other words, if even one key is held for the input chord
-then the output action will be continued to be held,
-but only for the mentioned action categories.
-The behaviour also applies to the actions mentioned above
-when used inside of `multi` but not within any other action.
-
-An exception to the behaviour described above
-for the action categories that would normally apply
-is if a chord decomposition occurs.
-A chord decomposition occurs when you input a chord
-that does not correspond to any action.
-When this happens, kanata splits up the key presses to activate
-other actions from the components of the input chord.
-In this scenario, the behaviour described in the next paragraph will occur.
-
-For chord decompositions and all other action categories,
-the release behaviour is more confusing:
-the output action will end when any key is released during the timeout,
-or if the timeout expires, the output action ends when the *first* key
-that was pressed in the chord gets released.
-This inconsistency is a limitation of the current implementation.
-In these scenarios it is recommended
-to hold down all keys if you want to keep holding
-and to release all keys if you want to do a release.
-This is because it will probably be difficult
-to know which key was pressed first.
-
-If you want to bypass the behaviour of keys being held for chord outputs,
-you could change the chord output actions to be <<macro,macros>> instead.
-Using a macro will guarantee a rapid press+release for the output keys.
-
-[[dofaliasenvcond]]
-=== dofaliasenvcond
-<<table-of-contents,Back to ToC>>
-
-NOTE: this configuration item is older and instead you may want to use
-the newer and more generalized <<environment>> configuration.
-
-There is a variant of `dofalias`: `dofaliasenvcond`.
-This variant is parsed similarly,
-but there must be an extra list parameter
-that comes before all of the name-action pairs.
-
-The list must contain two strings.
-In order, these strings are:
-an environment variable name,
-and the environment variable value.
-When the environment variable defined by the name
-has the corresponding value when starting kanata,
-the aliases within will be active.
-Otherwise, the aliases will be skipped.
-
-A use case for `dofaliasenvcond` is when one has multiple devices
-which vary in layout of keys,
-e.g. different special keys on the bottom row.
-Using environment variables, one can use the same kanata
-configuration across those multiple devices
-while changing key behaviours to keep consistent behaviour
-of specific key positions across the multiple devices,
-when the hardware keys at those physical key positions are not
-the same.
-
-
-.Example:
-[source]
-----
-(dofaliasenvcond (LAPTOP lp1)
-  met @lp1met
-)
-
-(dofaliasenvcond (LAPTOP lp2)
-  met @lp2met
-)
-----
-
-.Set environment variables in the current terminal process:
-[source]
-----
-# powershell
-$env:VAR_NAME = "var_value"
-
-# bash
-VAR_NAME=var_value
-----
+TIP: The keys `nop0-nop9` can be used as no-op outputs that
+can still be checked within `fork`, unlike what `XX` does.
 
 [[switch]]
 === switch
-<<table-of-contents,Back to ToC>>
 
+**Reference**
+
+The `switch` action allows conditionally activating 0 or more actions,
+depending on conditional checks.
+
+.Syntax:
+[source]
+----
+(switch
+  $logic-check1 $action1 $post-activate1
+  $logic-check2 $action2 $post-activate2
+  ...
+  $logic-checkN $actionN $post-activateN)
+----
+
+[cols="1,4"]
+|===
+| `$logic-check`
+| The condition, which if it evaluates to true,
+will trigger the corresponding action.
+
+| `$action`
+| Action to activate when logic evaluates to true.
+
+| `$post-activate`
+| Valid values are `fallthrough` and `break`.
+With `fallthrough`, when an action activates
+switch will continue evaluating further logic checks
+and potentially trigger more actions.
+With `break`, further actions will not activate.
+|===
+
+The logic check is a list.
+The items within the list can either be key names or a special list check.
+A key name item evaluates to true if that key name
+is a currently active key output of Kanata upon activating `switch`
+The outer-most list evaluates to true as whole
+if any of the items evaluates to true.
+
+.Syntax of logic check:
+[source]
+----
+($item1 $item2 ... $itemN)
+----
+
+.Syntax of special checks:
+[source]
+----
+(or  $item1 $item2 ... $itemN)
+(and $item1 $item2 ... $itemN)
+(not $item1 $item2 ... $itemN)
+(key-history $key-name $key-recency)
+(key-timing  $key-recency $comparator $time)
+(input         $input-type $key-name)
+(input-history $input-type $key-name $input-recency)
+(layer      $layer-name)
+(base-layer $layer-name)
+----
+
+[cols="1,4"]
+|===
+| `or`
+| Evaluates to true if any `$item` is true.
+
+| `and`
+| Evaluates to true if all of `$item` are true.
+
+| `not`
+| Evaluates to true if all of `$item` are false.
+
+| `key-history`
+| Evaluates to true if the key in the recency slot matches `$key-name`.
+A `$key-recency` of 1 is the most recent key pressed according to Kanata processing.
+The max recency is 8.
+
+| `key-timing`
+| The valid values for `$comparator` are `less-than` and `greater-than`,
+with `lt` and `gt` as shorthand if desired.
+This item evaluates to true if the key with the corresponding recency
+was pressed — for `lt` more recently than, or for `gt` later than —
+the defined `$time` with unit milliseconds.
+
+| `input`
+| Evaluates to true if the `$key-name` is currently pressed.
+The `$input-type` must be either `real` or `virtual`.
+If using `real`, this will check against the dofsrc inputs.
+If using `virtual`, this will check against virtual key activations.
+
+| `input-history`
+| Evaluates to true if the input in the `$input-recency` slot matches `$key-name`.
+Two input types use the same history with respect to recency slots.
+A recency of 1 is the most recent input i.e. the input activating `switch` itself.
+The max recency is 8.
+
+| `layer`
+| Evaluates to true if the active layer matches `$layer-name`.
+
+| `base-layer`
+| Evaluates to true if the most-recently-switched-to layer
+from a `layer-switch` action matches `$layer-name`.
+|===
+
+**Description**
+
+Conceptually, the `switch` action is similar to <<fork>>
+but has more capabilities as well as more complexity.
 The `switch` action accepts multiple cases.
 One case is a triple of:
 
@@ -3261,7 +2818,7 @@ The number of milliseconds must be 0-65535.
 WARNING: The maximum milliseconds value of this configuration item
 across your whole configuration
 will be a lower bound of how long it takes for kanata to become idle
-and stop processing its state machine every approxmately 1ms.
+and stop processing its state machine every approximately 1ms.
 
 .Example:
 [source]
@@ -3318,15 +2875,13 @@ Inputs can be either real keys or "virtual" (fake) keys.
 )
 ----
 
-Similar to `key-history` for regular active keys,
-`input-history` also exists.
-
-NOTE:
-A perhaps surprising (but hopefully logical) behaviour of input-history
+Similar to `key-history` for regular active keys, `input-history` also exists.
+A perhaps surprising, but hopefully logical, behaviour of input-history
 when compared to key-history is that, at the time of switch activation,
 the history of `input-history` for recency `1` will be the just-pressed input.
+In other words recency `1` is the input activating the `switch` action itself.
 Whereas with `key-history` for example, the key that will be next outputted
-is of course still undetermined, so is not in the history.
+may be determined by the switch logic itself, so is not in the history.
 The consequence of this is that you should use a recency of `2`
 when referring to the previously pressed input
 because the current input is in the recency `1` slot.
@@ -3362,17 +2917,1781 @@ otherwise it evaluates to false.
 )
 ----
 
+==== base-layer
+
+The `base-layer` list item evaluates to true
+if the configured layer name is the base layer.
+The base layer is the most recently switched-to layer
+from a `layer-switch` action,
+or the first layer defined in your configuration
+if `layer-switch` has never been activated.
+
+.Example:
+[source]
+----
+(dofalias switch-layer-example
+  (switch
+     ((base-layer base)) x break
+    ((base-layer other)) y break
+                 () z break
+  )
+)
+----
+
+
+[[cmd]]
+=== cmd
+
+WARNING: This action does not work unless you use the appropriate binary
+or - if compiling yourself - the appropriate feature flag.
+Additionally you must add the <<danger-enable-cmd>> `dofcfg` option.
+
+**Reference**
+
+The `cmd` action allows you to execute arbitrary binaries with arbitrary arguments.
+The `cmd-log` variant behaves similarly but allows customization
+of the stdout and stderr log levels within Kanata's output logging.
+The `cmd-output-keys` is like `cmd`, but stdout of the command
+will be parsed as a list of keys, output chords, and delays similar to <<macro>>
+and be typed as kanata outputs.
+
+.Syntax:
+[source]
+----
+(cmd $binary $arg1 $arg2 ... $argN)
+(cmd-log $stdout-log-level $stderr-log-level)
+(cmd-output-keys $binary $arg1 $arg2 ... $argN)
+----
+
+[cols="1,3"]
+|===
+| `$binary`
+| Executable binary to run.
+
+| `$arg`
+| Argument passed into the binary.
+
+| `$stdout-log-level`
+| Log level for stdout of the command. Must be `+debug+`, `+info+`, `+warn+`, `+error+`, or `+none+`.
+
+| `$stdout-log-level`
+| Log level for stderr of the command. Must be `+debug+`, `+info+`, `+warn+`, `+error+`, or `+none+`.
+|===
+
+**Description**
+
+The `+cmd+` action executes a program with arguments. It accepts one or more
+strings. The first string is the program that will be run and the following
+strings are arguments to that program. The arguments are provided to the
+program in the order written in the config file.
+Lists may also be used within `cmd`
+which you may desire to do for reuse via `dofvar`.
+Lists will be flattened such that arguments are provided to the program
+in the order written in the config file, regardless of list nesting.
+To be technical, it would be a depth-first flattening (similar to DFS).
+
+Commands are executed directly and not via a shell, so you cannot make
+use of environment variables or symbols with special meaning.
+For example `+~+` or `+$HOME+` in Linux will not be
+substituted with your home directory.
+If you want to execute with a shell program
+use the shell as the first parameter, e.g. `bash` or `powershell.exe`.
+
+The user executing the command
+is the user that kanata was started with.
+For example, if kanata was started by root,
+the command will be run by the root user.
+If you need to execute as a different user,
+on Unix platforms you can use `sudo -u USER`
+before the rest of your command to achieve this.
+
+.Example:
+[source]
+----
+(dofalias
+  cm1 (cmd rm -fr /tmp/testing)
+
+  ;; You can use bash -c and then a quoted string to execute arbitrary text in
+  ;; bash. All text within double-quotes is treated as a single string.
+  cm2 (cmd bash -c "echo hello world")
+
+  ;; You can prefix commands with sudo -u USER
+  ;; to execute commands as a different user.
+  cm3 (cmd sudo -u other_user bash -c "echo goodbye")
+)
+----
+
+By default, `+cmd+` logs start of command, completion of command, stdout, and stderr.
+Using the variant `+cmd-log+`, these log levels can be changed, and even disabled.
+It takes two arguments, `+<log_level>+` and `+<error_log_level>+`. `+<log_level>+`
+will be the level where the command to run, stdout, and stderr are logged.
+The error channel is logged only if there is a failure with running the
+command (typically if the command can't be found, or there is trouble spawning it).
+
+The valid levels are `+debug+`, `+info+`, `+warn+`, `+error+`, and `+none+`.
+
+.Example:
+[source]
+----
+(dofalias
+  ;; The first two arguments are the log levels, then just the normal command
+  ;; This will only error if `bash` is not found or something else goes
+  ;; wrong with the initial execution. Any logs produced by bash will not
+  ;; be shown.
+  noisy-cmd (cmd-log none error bash -c "echo hello this produces a log")
+
+  ;; This will only log the output of the command, but it won't start
+  ;; because the command doesn't exist.
+  ignore-failure-cmd (cmd-log info none thiscmddoesnotexist)
+
+  verbose-only-log (cmd-log verbose verbose bash -c "echo yo")
+)
+----
+
+There is a variant of `cmd`: `cmd-output-keys`. This variant reads the output
+of the executed program and reads it as an S-expression, similarly to the
+<<macro, macro action>>. However — unlike macro — only delays, keys, chords, and
+chorded lists are supported. Other actions are not supported.
+
+[source]
+----
+(dofalias
+  ;; bash: type date-time as YYYY-MM-DD HH:MM
+  pdb (cmd-output-keys bash -c "date +'%F %R' | sed 's/./& /g' | sed 's/:/S-;/g' | sed 's/\(.\{20\}\)\(.*\)/\(\1 spc \2\)/'")
+
+  ;; powershell: type date-time as YYYY-MM-DD HH:MM
+  pdp (cmd-output-keys powershell.exe "echo '(' (((Get-Date -Format 'yyyy-MM-dd HH:mm').toCharArray() -join ' ').insert(20, ' spc ') -replace ':','S-;') ')'")
+)
+----
+
+[[arbitrary-code]]
+=== arbitrary-code
+
+The `arbitrary-code` action allows sending an arbitrary number to kanata's
+output mechanism. The press is sent when pressed, and the release sent when
+released. This action can be useful for testing keys that are not yet named or
+mapped in kanata. Please contribute findings with names and mappings, either in
+a GitHub issue or as a pull request!
+
+WARNING: This is not cross platform!
+
+WARNING: When using the Interception driver, this action is still sent over
+SendInput.
+
+[source]
+----
+(dofalias ab1 (arbitrary-code 700))
+----
+
+[[global-overrides]]
+== Global overrides
+
+The `dofoverrides` optional configuration item allows you to create global
+key overrides, irrespective of what actions are used to generate those keys.
+It accepts pairs of lists:
+
+1. the input key list that gets replaced
+2. the output key list to replace the input keys with
+
+Both input and output lists accept 0 or more modifier keys (e.g. lctl, rsft)
+and exactly 1 non-modifier key (e.g. 1, bspc).
+
+Only zero or one `dofoverrides` is allowed in a configuration file.
+
+NOTE: Depending on your use case
+you may want to adjust <<override-release-on-activation>> in `dofcfg`.
+
+.Example:
+[source]
+----
+;; Swap numbers and their symbols with respect to shift
+(dofoverrides
+  (1) (lsft 1)
+  (2) (lsft 2)
+  ;; repeat for all remaining numbers
+
+  (lsft 1) (1)
+  (lsft 2) (2)
+  ;; repeat for all remaining numbers
+)
+----
+
+== Include other files[[include]]
+
+The `include` optional configuration item
+allows you to include other files into the configuration.
+This configuration accepts a single string which is a file path.
+The file path can be an absolute path or a relative path.
+The path will be relative to the defined configuration file.
+
+At the time of writing, includes can only be placed at the top level.
+The included files also cannot contain includes themselves.
+
+Non-existing files will be ignored.
+
+.Example:
+----
+;; This is in the file initially read by kanata, e.g. kanata.kbd
+(include other-file.kbd)
+
+;; This is in the other file
+(dofalias
+  included-alias XX
+  ;; ...
+)
+
+;; This is in the other file
+(doflayer included-layer
+  ;; ...
+)
+----
+
+[[platform]]
+== Platform-specific configuration
+
+If you put any top-level configuration item
+within a list beginning with `platform`,
+it will become a platform-specific configuration
+that is only active for the specified platforms.
+
+.Syntax:
+[source]
+----
+(platform (applicable-platforms) ...)
+----
+
+The valid values for applicable platforms are:
+
+- `win`
+- `winiov2`
+- `wintercept`
+- `linux`
+- `macos`
+
+.Example:
+[source]
+----
+(platform (macos)
+  ;; Only on macos, use command arrows to jump/delete words
+  ;; because command is used for so many other things
+  ;; and it's weird that these cases use alt.
+  (dofoverrides
+    (lmet bspc) (lalt bspc)
+    (lmet left) (lalt left)
+    (lmet right) (lalt right)
+  )
+)
+
+(platform (win winiov2 wintercept)
+  (dofalias run-my-script (cmd #| something involving powershell |#))
+)
+
+(platform (macos linux)
+  (dofalias run-my-script (cmd #| something involving bash |#))
+)
+----
+
+[[environment]]
+== Environment-conditional configuration
+
+.Syntax:
+[source]
+----
+(environment (env-var-name env-var-value) ...)
+----
+
+The items `env-var-name` and `env-var-value` can be arbitrary strings.
+The name is the environment variable that is read
+for determining if the configuration is used or not.
+If the value of the environment variable (set only on kanata startup)
+matches `env-var-value`, the configuration is used; otherwise it is ignored.
+An empty string for `env-var-value` — `""` — will use the configuration
+if the environment variable an empty string
+and also if the variable is unset/missing entirely.
+
+.Example:
+[source]
+----
+(environment (LAPTOP lp1)
+  (dofalias met @lp1met)
+)
+
+(environment (LAPTOP lp2)
+  (dofalias met @lp2met)
+)
+----
+
+.Set environment variables in the current terminal process:
+[source]
+----
+# powershell
+$env:VAR_NAME = "var_value"
+
+# bash
+VAR_NAME=var_value
+----
+
+
+[[input-chords-v2]]
+== Input chords / combos (v2)
+
+You may define a single `+dofchordsv2+` configuration item.
+This enables you to define global input chord behaviour.
+One might also find this functionality called another name of "combos"
+in other projects.
+
+Input chords enables you to press two or more keys in quick succession
+to activate a different action
+than would normally be associated with those keys.
+When activating a chord, the order of presses is not important;
+when all keys belonging to a chord are pressed,
+the action activates regardless of press order.
+
+The `+dofchordsv2+` feature is configured as shown below:
+
+.Syntax example
+[source]
+----
+(dofchordsv2
+  (participating-keys1) action1 timeout1 release-behaviour1 (disabled-layers1)
+    ...
+  (participating-keysN) actionN timeoutN release-behaviourN (disabled-layersN)
+)
+----
+
+The configuration is made up of 5-tuples of:
+
+[cols="1,3"]
+|===
+| `$participating-keys`
+| These are key names you would use in `dofsrc`.
+A minimum of two keys must be defined per chord.
+The list must be unique per chord.
+
+| `$action`
+| These are actions as you would configure in `doflayer` or `dofalias`.
+The action activates if all participating keys are activated
+within the timeout.
+
+| `$timeout`
+| The time (unit: milliseconds) within which,
+if all participating keys are pressed,
+the chord action will activate;
+otherwise the key presses are handled by the active layer.
+The time begins when the first participant is pressed.
+
+| `$release-behaviour`
+| This must be either `first-release` or `all-released`;
+`first-release` means the chord action will be released
+when the first participant is released,
+while `all-released` means the chord action will be released
+only when all of the participants have been released.
+
+| `$disabled-layers`
+| A list of layer names on which this chord is disabled.
+|===
+
+Input chords have a related `dofcfg` item: <<chords-v2-min-idle>>.
+When any non-chord activation happens,
+a timeout begins with duration configured by
+`chords-v2-min-idle` (unit: milliseconds).
+Until this timeout expires, all inputs will immediately skip
+chords processing and be processed by the active layer.
+
+IMPORTANT: When opting into input chords v2,
+you must enable `concurrent-tap-hold`.
+This is enforced for a more responsive `tap-hold` experience when
+activated by a chord.
+
+.Example:
+[source]
+----
+(dofcfg concurrent-tap-hold yes)
+(dofchordsv2
+  (a s)    c                200 all-released  (non-chord-layer)
+  (a s d) (macro h e l l o) 250 first-release (non-chord-layer)
+  (s d f) (macro b y e)     400 first-release (non-chord-layer)
+)
+----
+
+
+NOTE: Also see <<input-chords,v1 chords>>,
+which are configured differently and can be defined per-layer.
+
+[[optional-dofcfg-options]]
+== dofcfg options
+
+[[danger-enable-cmd]]
+=== danger-enable-cmd
+
+This option can be used to enable the `cmd` action in your configuration. The
+`+cmd+` action allows kanata to execute programs with arguments passed to them.
+
+This requires using a kanata program that is compiled with the `cmd` action
+enabled. The reason for this is so that if you choose to, there is no way for
+kanata to execute arbitrary programs even if you download some random
+configuration from the internet.
+
+This configuration is disabled by default and can be enabled by giving it the
+value `yes`.
+
+.Example:
+[source]
+----
+(dofcfg
+  danger-enable-cmd yes
+)
+----
+
+[[sequence-timeout]]
+=== sequence-timeout
+
+This option customizes the key sequence timeout (unit: ms). Its default value
+is 1000. The purpose of this item is explained in <<sequences>>.
+
+.Example:
+[source]
+----
+(dofcfg
+  sequence-timeout 2000
+)
+----
+
+[[sequence-input-mode]]
+=== sequence-input-mode
+
+This option customizes the key sequence input mode. Its default value when not
+configured is `hidden-suppressed`.
+
+The options are:
+
+- `visible-backspaced`: types sequence characters as they are inputted. The
+  typed characters will be erased with backspaces for a valid sequence termination.
+- `hidden-suppressed`: hides sequence characters as they are typed. Does not
+  output the hidden characters for an invalid sequence termination.
+- `hidden-delay-type`: hides sequence characters as they are typed. Outputs the
+  hidden characters for an invalid sequence termination either after a
+  timeout or after a non-sequence key is typed.
+
+For `visible-backspaced` and `hidden-delay-type`, a sequence leader input will
+be ignored if a sequence is already active. For historical reasons, and in case
+it is desired behaviour, a sequence leader input using `hidden-suppressed` will
+reset the key sequence.
+
+See <<sequences>> for more about sequences.
+
+.Example:
+[source]
+----
+(dofcfg
+  sequence-input-mode visible-backspaced
+)
+----
+
+
+[[sequence-backtrack-modcancel]]
+=== sequence-backtrack-modcancel
+
+This option customizes the behaviour of key sequences
+when modifiers are used.
+The default is `yes` and can be overridden to `no` if desired.
+
+Setting it to `yes` allows both `fk1` and `fk2` to be activated
+in the following configuration, but with `no`,
+`fk1` will be impossible to activate
+
+----
+(dofseq
+  fk1 (lsft a b)
+  fk2 (S-(c d))
+)
+----
+
+See <<sequences>> for more about sequences and
+https://github.com/jtroo/kanata/blob/main/docs/sequence-adding-chords-ideas.md[this document]
+for more context about this specific configuration.
+
+.Example:
+[source]
+----
+(dofcfg
+  sequence-backtrack-modcancel no
+)
+----
+
+[[log-layer-changes]]
+=== log-layer-changes
+
+By default, kanata will log layer changes. However, logging has some processing
+overhead. If you do not care for the logging, you can choose to disable it.
+
+.Example:
+[source]
+----
+(dofcfg
+  log-layer-changes no
+)
+----
+
+If `+--log-layer-changes+` is passed as a command line argument,
+a `no` in the configuration file will be overridden
+and layer changes will again be logged.
+This flag can be helpful when testing new configuration changes
+while keeping the default behaviour as "no logging" to save on processing,
+so that the `dofcfg` item does not need to be adjusted back and forth
+when experimenting vs. stable usage.
+
+[[delegate-to-first-layer]]
+=== delegate-to-first-layer
+
+
+By default, transparent keys on layers
+will delegate to the corresponding dofsrc key
+when found on a layer activated by `layer-switch`.
+
+This config entry changes the behaviour
+to delegate to the action in the same position on the first layer defined
+in the configuration, which is the active layer on startup.
+
+For more context, see https://github.com/jtroo/kanata/issues/435.
+
+.Example:
+[source]
+----
+(dofcfg
+  delegate-to-first-layer yes
+)
+----
+
+
+[[movemouse-inherit-accel-state]]
+=== movemouse-inherit-accel-state
+
+By default `movemouse-accel` actions will track the acceleration
+state for vertical and horizontal axes separately.
+
+When this setting is enabled, `movemouse-accel` will behave exactly like mouse movements in https://qmk.fm[QMK],
+i.e. the acceleration state of new mouse
+movement actions will be inherited if others are already being pressed.
+
+.Example:
+[source]
+----
+(dofcfg
+  movemouse-inherit-accel-state yes
+)
+----
+
+[[movemouse-smooth-diagonals]]
+=== movemouse-smooth-diagonals
+
+By default, mouse movements move one direction at a time
+and vertical/horizontal movements are on independent timers.
+
+This can result in non-smooth diagonals when drawing a line in some app.
+This option adds a small imperceptible amount of latency to
+synchronize the mouse movements.
+
+.Example:
+[source]
+----
+(dofcfg
+  movemouse-smooth-diagonals yes
+)
+----
+
+=== dynamic-macro-max-presses [[dynamic-macro-max-presses]]
+
+This configuration allows you to customize the length limit on dynamic macros.
+The default length limit is 128 keys.
+
+.Example:
+[source]
+----
+(dofcfg
+  dynamic-macro-max-presses 1000
+)
+----
+
+=== concurrent-tap-hold [[concurrent-tap-hold]]
+This configuration makes multiple tap-hold actions
+that are activated near in time expire their timeout quicker.
+By default this is disabled.
+When disabled, the timeout for a following tap-hold
+will start from 0ms **after** the previous tap-hold expires.
+When enabled, the timeout will start
+as soon as the tap-hold action is pressed
+even if a previous tap-hold action is still held and has not expired.
+
+.Example:
+[source]
+----
+(dofcfg
+  concurrent-tap-hold yes
+)
+----
+
+[[block-unmapped-keys]]
+=== block-unmapped-keys
+
+If you desire to use only a subset of your keyboard
+you can use `block-unmapped-keys` to make every key
+other than those that exist in `dofsrc` a no-op.
+
+NOTE: this only functions correctly if you also set
+<<process-unmapped-keys>> to yes.
+
+.Example:
+[source]
+----
+(dofcfg
+  block-unmapped-keys yes
+)
+----
+
+[[rapid-event-delay]]
+=== rapid-event-delay
+
+This configuration applies to the following events:
+
+* the release of one-shot-press activation
+* the release of the tapped key in a tap-hold activation
+* a non-eager tap-dance activation from interruption by another key
+* input chord activations, both v1 and v2
+
+Key event processing is paused the defined number of milliseconds (approximate).
+The default value is 5.
+
+There will be a minor input latency impact in the mentioned scenarios.
+Since 5ms is 1 frame at 200 Hz refresh rate,
+in most scenarios this will not be perceptible.
+
+The reason for this configuration existing is that some environments
+do not process the scenarios correctly due to the rapidity of key events.
+Kanata does send the events in the correct order,
+so the fault is more in the environment,
+but kanata provides a workaround anyway.
+
+If you are negatively impacted by the latency increase of these events
+and your environment is not impacted by increased rapidity,
+you can reduce the value to a number between 0 and 4.
+
+.Example:
+[source]
+----
+(dofcfg
+  ;; If your environment is particularly buggy, might need to delay even more
+  rapid-event-delay 20
+)
+----
+
+[[chords-v2-min-idle]]
+=== chords-v2-min-idle
+
+This configuration affects the timer during which chords processing is disabled.
+NOTE: For more info, see <<input-chords-v2>>.
+
+The default (and minimum) value is `5` and the unit is milliseconds.
+
+.Example:
+[source]
+----
+(dofcfg
+  chords-v2-min-idle 200
+)
+----
+
+[[override-release-on-activation]]
+=== override-release-on-activation
+
+This configuration item changes activation behaviour from `dofoverrides`.
+
+Take this example override:
+
+[source]
+----
+(dofoverrides (lsft a) (lsft 9))
+----
+
+The default behaviour is that if `lsft` is released **before** releasing `a`,
+kanata's behaviour would be to send `a`.
+
+A future improvement could be to make the `9` continue to be the key held,
+but that is not implemented today.
+
+The workaround in case the above behaviour negatively impacts your workflow
+is to enable this configuration.
+This configuration will press and then immediately release the `9` output
+as soon as the override activates, meaning you are unlikely as a human to ever
+release `lsft` first.
+
+The effect of this configuration is that the `9` key cannot remain held
+when activated by the override which is important to consider for your use cases.
+
+.Example:
+[source]
+----
+(dofcfg
+  override-release-on-activation yes
+)
+----
+
+[[allow-hardware-repeat]]
+=== allow-hardware-repeat
+
+By default, any repeat-key events generated by the physical keyboard (or operating system)
+will be passed through to the application.  On Linux, under Wayland, this is wasted effort
+since the DE handles key-repeat on its own.  Such events can also be distracting when
+debugging your configuration with evtest, etc.
+
+Setting this option to "false" will cause such events to be dropped, and not passed through.
+This is primarily meant for Linux, but may find some use on Mac.  It is not implemented on
+Windows, and will be silently ignored.
+
+.Example:
+[source]
+----
+(dofcfg
+   allow-hardware-repeat false
+)
+----
+
+[[alias-to-trigger-on-load]]
+=== alias-to-trigger-on-load
+
+Select an alias to execute when first starting, and after each
+live-reload of the config. You can use this to run external
+commands, or to stack layers (with layer-while-held).
+
+The name of an alias, without a leading "@", is expected as a
+parameter.  The example below will beep at startup (assuming
+your system has a beep command), and will already be blocking
+the swapped "i" and "o" keys.
+
+.Example:
+[source]
+----
+(dofcfg
+  alias-to-trigger-on-load S
+  danger-enable-cmd yes
+)
+
+(doffakekeys B (layer-while-held block))
+
+(dofalias
+  P (on-press toggle-vkey B)
+  S (macro @P (cmd beep))
+)
+
+(dofsrc i o p )
+(doflayer base o i @P )
+(doflayer block • • _ )
+----
+
+[[linux-only-linux-dev]]
+=== Linux only: linux-dev
+
+By default, kanata will try to detect which input devices are keyboards and try
+to intercept them all. However, you may specify exact keyboard devices from the
+`/dev/input` directories using the `linux-dev` configuration.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-dev /dev/input/by-path/platform-i8042-serio-0-event-kbd
+)
+----
+
+If you want to specify multiple keyboards, you can separate the paths with a
+colon `+:+`.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-dev /dev/input/dev1:/dev/input/dev2
+)
+----
+
+Due to using the colon to separate devices, if you have a device with colons in
+its file name, you must escape those colons with backslashes:
+
+[source]
+----
+(dofcfg
+  linux-dev /dev/input/path-to\:device
+)
+----
+
+Alternatively, you can use list syntax, where both backslashes and colons
+are parsed literally. List items are separated by spaces or newlines.
+Using quotation marks for each item is optional, and only required if an
+item contains spaces.
+
+[source]
+----
+(dofcfg
+  linux-dev (
+    /dev/input/path:to:device
+    "/dev/input/path to device"
+  )
+)
+----
+
+[[linux-only-linux-dev-names-include]]
+=== Linux only: linux-dev-names-include
+
+In the case that `linux-dev` is omitted,
+this option defines a list of device names that should be included.
+Device names that do not exist in the list will be ignored.
+This option is parsed identically to `linux-dev`.
+
+Kanata will print device names on startup with log lines that look like below:
+
+----
+registering /dev/input/eventX: "Name goes here"
+----
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-dev-names-include (
+    "Device name 1"
+    "Device name 2"
+  )
+)
+----
+
+[[linux-only-linux-dev-names-exclude]]
+=== Linux only: linux-dev-names-exclude
+
+In the case that `linux-dev` is omitted,
+this option defines a list of device names that should be excluded.
+This option is parsed identically to `linux-dev`.
+
+The `linux-dev-names-include` and `linux-dev-names-exclude` options
+are not mutually exclusive
+but in practice it probably only makes sense to use one and not both.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-dev-names-exclude (
+    "Device Name 1"
+    "Device Name 2"
+  )
+)
+----
+
+[[linux-only-linux-continue-if-no-devs-found]]
+=== Linux only: linux-continue-if-no-devs-found
+
+By default, kanata will crash if no input devices are found. You can change
+this behaviour by setting `linux-continue-if-no-devs-found`.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-continue-if-no-devs-found yes
+)
+----
+
+[[linux-only-linux-device-detect-mode]]
+=== Linux only: linux-device-detect-mode
+
+Kanata on Linux automatically detects and grabs input devices
+when none of the explicit device configurations are in use.
+In case kanata is undesirably grabbing mouse-like devices,
+you can use a configuration item to change detection behaviour.
+
+The configuration is `linux-device-detect-mode` and it has the options:
+
+[cols="1,4"]
+|===
+| `keyboard-only`
+| Grab devices that seem to be a keyboard only.
+
+| `keyboard-mice`
+| Grab devices that seem to be a keyboard only
+and devices that declare **both** keyboard and mouse functionality.
+
+| `any`
+| Grab all keyboard-like and mouse-like devices.
+|===
+
+The default behaviour is:
+
+[cols="1,4"]
+|===
+| `keyboard-mice`
+| When no mouse events are in `dofsrc`.
+
+| `any`
+| When any mouse buttons or mouse scroll events are in `dofsrc`.
+|===
+
+[[linux-only-linux-unicode-u-code]]
+=== Linux only: linux-unicode-u-code
+
+Unicode on Linux works by pressing Ctrl+Shift+U, typing the unicode hex value,
+then pressing Enter. However, if you do remapping in userspace, e.g. via
+xmodmap/xkb, the keycode "U" that kanata outputs may not become a keysym "u"
+after the userspace remapping. This will be likely if you use non-US,
+non-European keyboards on top of kanata. For unicode to work, kanata needs to
+use the keycode that outputs the keysym "u", which might not be the keycode
+"U".
+
+You can use `evtest` or `kanata --debug`, set your userspace key remapping,
+then press the key that outputs the keysym "u" to see which underlying keycode
+is sent. Then you can use this configuration to change kanata's behaviour.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-unicode-u-code v
+)
+----
+
+[[linux-only-linux-unicode-termination]]
+=== Linux only: linux-unicode-termination
+
+Unicode on Linux terminates with the Enter key by default. This may not work in
+some applications. The termination is configurable with the following options:
+
+- `enter`
+- `space`
+- `enter-space`
+- `space-enter`
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-unicode-termination space
+)
+----
+
+=== Linux only: linux-x11-repeat-delay-rate[[linux-only-x11-repeat-rate]]
+
+On Linux, you can tell kanata to run `xset r rate <delay> <rate>`
+on startup and on live reload
+via the configuration item `linux-only-x11-repeat-rate`.
+This takes two numbers separated by a comma.
+The first number is the delay in ms
+and the second number is the repeat rate in repeats/second.
+
+This configuration item does not affect Wayland or no-desktop environments.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-x11-repeat-delay-rate 400,50
+)
+----
+
+[[linux-only-linux-use-trackpoint-property]]
+=== Linux only: linux-use-trackpoint-property
+
+On linux, you can ask kanata to label itself as a trackpoint. This has several
+effects on libinput including enabling middle mouse button scrolling and using a
+different acceleration curve. Otherwise, a trackpoint intercepted by kanata may
+not behave as expected.
+
+If using this feature, it is recommended to filter out any non-trackpoint
+pointing devices using <<linux-only-linux-dev-names-include>>,
+<<linux-only-linux-dev-names-exclude>> or <<linux-only-linux-dev>> to avoid
+changing their behavior as well.
+
+.Example:
+[source]
+----
+(dofcfg
+  linux-use-trackpoint-property yes
+)
+----
+
+[[linux-only-linux-output-device-bus-type]]
+=== Linux only: linux-output-device-bus-type
+
+Kanata on Linux needs to declare a "bus type" for its evdev output device.
+The options are `USB` and `I8042`, with the default as `I8042`.
+Using USB can https://github.com/jtroo/kanata/pull/661[break disable-touchpad-while-typing on Wayland].
+But using I8042 appears to break https://github.com/jtroo/kanata/issues/1131[some other scenarios].
+Thus the output bus type is configurable.
+
+.Example:
+[source]
+----
+(dofcfg
+   linux-output-device-bus-type USB
+)
+----
+
+[[macos-only-macos-dev-names-include]]
+=== macOS only: macos-dev-names-include
+
+This option defines a list of device names that should be included.
+By default, kanata will try to detect which input devices are keyboards and try
+to intercept them all. However, you may specify exact keyboard devices to intercept
+using the `macos-dev-names-include` configuration.
+Device names that do not exist in the list will be ignored.
+This option is parsed identically to `linux-dev`.
+
+Use `kanata -l` or `kanata --list` to list the available keyboards.
+
+.Example:
+[source]
+----
+(dofcfg
+  macos-dev-names-include (
+    "Device name 1"
+    "Device name 2"
+  )
+)
+----
+
+[[windows-only-windows-altgr]]
+=== Windows only: windows-altgr
+
+There is an option for Windows to mitigate the strange behaviour of AltGr (ralt)
+if you're using `process-unmapped-keys yes` or have the key in your dofsrc.
+This is applicable for many non-US layouts.
+You can use one of the listed values to change what kanata does with the key:
+
+* `cancel-lctl-press`
+** This will remove the `lctl` press that is generated alonside `ralt`
+* `add-lctl-release`
+** This adds an `lctl` release when `ralt` is released
+
+Without these workarounds,
+you should use `process-unmapped-keys (all-except lctl ralt))`,
+or use `process-unmapped-keys no`
+**and** also omit both `ralt` and `lctl` from `dofsrc`.
+
+.Example:
+[source]
+----
+(dofcfg
+  windows-altgr add-lctl-release
+)
+----
+
+For more context, see: https://github.com/jtroo/kanata/issues/55.
+
+NOTE: Even with these workarounds, putting `+lctl+` and `+ralt+` in your dofsrc may not
+work properly with other applications that also use keyboard interception.
+Known application with issues: GWSL/VcXsrv
+
+=== Windows only: windows-interception-mouse-hwid[[windows-only-windows-interception-mouse-hwid]]
+
+This dofcfg item allows you to intercept mouse buttons for a specific mouse device.
+This only works with the Interception driver
+(the -wintercept variants of the release binaries).
+
+The original use case for this is for laptops such as a Thinkpad,
+which have mouse buttons that may be desirable to activate kanata actions with.
+
+To know what numbers to put into the string, you can run the variant with this
+dofcfg item defined with any numbers. Then when a button is first pressed on
+the mouse device, kanata will print its hwid in the log; you can then
+copy-paste that into this configuration entry. If this dofcfg item is not
+defined, the log will not print.
+
+Hwids in Kanata are byte array representations of a concatenation of the
+ASCII hardware ids, which can be seen in Device Manager on Windows. As such,
+they are an arbitrary length and can be very long.
+
+https://github.com/jtroo/kanata/issues/108[Relevant issue].
+
+.Example:
+[source]
+----
+(dofcfg
+  windows-interception-mouse-hwid "70, 0, 60, 0"
+)
+----
+
+=== Windows only: windows-interception-mouse-hwids[[windows-only-windows-interception-mouse-hwids]]
+
+This item has a similar purpose as the singular version documented above,
+but is instead a list of strings that allows multiple mice to be intercepted.
+
+If both the singular and list items are used,
+the singular version will behave as if added to the list.
+
+.Example:
+[source]
+----
+(dofcfg
+  windows-interception-mouse-hwids (
+    "70, 0, 60, 0"
+    "71, 0, 62, 0"
+  )
+)
+----
+
+=== Windows only: windows-interception-keyboard-hwids[[windows-only-windows-interception-keyboard-hwids]]
+
+This dofcfg item allows you to intercept only specific keyboards.
+Its value must be a list of strings
+with each string representing one hardware ID.
+
+To know what numbers to put into the string,
+you can run the variant with this dofcfg item empty.
+Then when a button is first pressed on the keyboard,
+kanata will print its hwid in the log.
+You can then copy-paste that into this configuration entry.
+If this dofcfg item is not defined, the log will not print.
+
+Hwids in Kanata are byte array representations of a concatenation of the
+ASCII hardware ids, which can be seen in Device Manager on Windows. As such,
+they are an arbitrary length and can be very long.
+
+.Example:
+[source]
+----
+(dofcfg
+  windows-interception-keyboard-hwids (
+    "70, 0, 60, 0"
+    "71, 72, 73, 74"
+  )
+)
+----
+
+[[windows-only-tray-icon]]
+=== Windows only: tray-icon
+
+Show a custom tray icon file for a <<windows-only-win-tray>> gui-enabled build of kanata on Windows.
+Accepts either the full path (including the file name with an extension) to the icon file
+or just the file name, which is then searched in the following locations:
+
+* Default parent folders:
+** config file's, executable's
+** env vars: `XDG_CONFIG_HOME`, `APPDATA` (`C:\Users\<Name>\AppData\Roaming`), `USERPROFILE` `/.config` (`C:\Users\<Name>\.config`)
+* Default config subfolders: `kanata` `kanata-tray`
+* Default image subfolders (optional): `icon` `img` `icons`
+* Supported image file formats: `ico` `jpg` `jpeg` `png` `bmp` `dds` `tiff`
+
+If not specified, tries to load any icon file from the same locations with the name matching
+config name with extension replaced by one of the supported ones.
+See https://github.com/jtroo/kanata/blob/main/cfg_samples/tray-icon/tray-icon.kbd[example config] for more details.
+
+.Example:
+[source]
+----
+;; in a config file C:\Users\<U>\AppData\Roaming\kanata\kanata.kbd
+(dofcfg
+  tray-icon base.png ;; will load C:\Users\<U>\AppData\Roaming\kanata\base.png
+)
+----
+
+[[windows-only-icon-match-layer-name]]
+=== Windows only: icon-match-layer-name
+
+When enabled, attempt to switch to a custom tray icon that matches the name of the active layer
+if the layer doesn't specify an explicit icon. If no icon file is found, the default icon will be used (see <<windows-only-tray-icon>>).
+File search rules are the same as in <<windows-only-tray-icon>>. Defaults to true.
+See https://github.com/jtroo/kanata/blob/main/cfg_samples/tray-icon/tray-icon.kbd[example config] for more details.
+
+[[windows-only-tooltip-layer-changes]]
+=== Windows only: tooltip-layer-changes
+
+Show a custom layer icon near the mouse pointer position. Defaults to false. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[windows-only-tooltip-show-blank]]
+=== Windows only: tooltip-show-blank
+
+Show a blank square when instead of an icon if a layer isn't configured to have one. Defaults to false. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[windows-only-tooltip-no-base]]
+=== Windows only: tooltip-no-base
+
+Don't show a tooltip layer icon for the base layer (1st doflayer). Defaults to true. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[windows-only-tooltip-duration]]
+=== Windows only: tooltip-duration
+
+Set duration (in ms) for showing a custom layer icon near the mouse pointer position. 0 to never hide. Defaults to 500. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[windows-only-tooltip-size]]
+=== Windows only: tooltip-size
+
+Set the size (comma-separated Width,Height without spaces) for a custom layer icon near the mouse pointer position. Defaults to 24,24. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[windows-only-notify-cfg-reload]]
+=== Windows only: notify-cfg-reload
+
+Show system notification message on config reload. Defaults to true. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[windows-only-notify-cfg-reload-silent]]
+=== Windows only: notify-cfg-reload-silent
+
+Disable sound for the system notification message on config reload. Defaults to false. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[windows-only-notify-error]]
+=== Windows only: notify-error
+
+Show system notification message on kanata errors. Defaults to true. Requires <<windows-only-win-tray>> gui-enabled build.
+
+[[using-multiple-dofcfg-options]]
+=== Using multiple dofcfg options
+
+The `dofcfg` entry is treated as a list with pairs of strings. For example:
+
+[source]
+----
+(dofcfg a 1 b 2)
+----
+
+This will be treated as configuration `a` having value `1` and configuration
+`b` having value `2`.
+
+An example dofcfg containing many of the options is shown below. It should be
+noted options that are Linux-only, Windows-only, or macOS-only will be ignored when used on
+a non-applicable operating system.
+
+[source]
+----
+;; Don't actually use this exact configuration,
+;; it's almost certainly not what you want.
+(dofcfg
+  process-unmapped-keys yes
+  danger-enable-cmd yes
+  sequence-timeout 2000
+  sequence-input-mode visible-backspaced
+  sequence-backtrack-modcancel no
+  log-layer-changes no
+  delegate-to-first-layer yes
+  movemouse-inherit-accel-state yes
+  movemouse-smooth-diagonals yes
+  dynamic-macro-max-presses 1000
+  linux-dev (/dev/input/dev1 /dev/input/dev2)
+  linux-dev-names-include ("Name 1" "Name 2")
+  linux-dev-names-exclude ("Name 3" "Name 4")
+  linux-continue-if-no-devs-found yes
+  linux-unicode-u-code v
+  linux-unicode-termination space
+  linux-x11-repeat-delay-rate 400,50
+  windows-altgr add-lctl-release
+  windows-interception-mouse-hwid "70, 0, 60, 0"
+)
+----
+
+== Advanced features[[advanced-features]]
+[[virtual-keys]]
+=== Virtual keys
+
+You can define up to 767 virtual keys.
+These keys are not directly mapped to any physical key presses or releases.
+Virtual keys can be activated via special actions:
+
+* `(on-press    <action> <virtual key name>)` or `on↓`:
+Activate a virtual key action when pressing the associated input key.
+* `(on-release  <action> <virtual key name>)` or `on↑`:
+Activate a virtual key action when releasing the associated input key.
+* `(on-idle <idle time> <action> <virtual key name>)`:
+Activate a virtual key action when kanata has been idle
+for at least `idle time` milliseconds.
+* `(hold-for-duration <hold time> <virtual key name>`):
+Press a virtual key for `hold time` milliseconds.
+If `hold-for-duration` retriggered on a virtual key before release,
+the time will be reset with no additional press/release events.
+
+The `<action>` parameter can be one of:
+
+* `tap-virtualkey     | tap-vkey`:
+Press and release the virtual key. If the key is already pressed, this only releases it.
+* `press-virtualkey   | press-vkey`:
+Press the virtual key. It will not be released until another action triggers a release or tap.
+If the key is already pressed, this does nothing.
+* `release-virtualkey | release-vkey`:
+Release the virtual key. If it is not already pressed, this does nothing.
+* `toggle-virtualkey  | toggle-vkey`:
+Press the virtual key if it is not already pressed, otherwise release it.
+
+A virtual key can be defined in a `defvirtualkeys` configuration entry.
+Configuring this entry is similar to `+dofalias+`,
+but you cannot make use of aliases inside to shorten an action.
+You can refer to previously defined virtual keys.
+
+Expanding on the `on-idle` action some more,
+the wording that "kanata" has been idle is important.
+Even if the keyboard is idle, kanata may not yet be idle.
+For example, if a long-running macro is playing,
+or kanata is waiting for the timeout of actions such as `caps-word` or `tap-dance`,
+kanata is not yet idle, and the tick count for the `<idle time>` parameter
+will not yet be counting even if you no longer have any keyboard keys pressed.
+
+.Example:
+[source]
+----
+(defvirtualkeys
+  ;; Define some virtual keys that perform modifier actions
+  ctl lctl
+  sft lsft
+  met lmet
+  alt lalt
+
+  ;; A virtual key that toggles all modifier virtual keys above
+  tal (multi
+        (on-press toggle-virtualkey ctl)
+        (on-press toggle-virtualkey sft)
+        (on-press toggle-virtualkey met)
+        (on-press toggle-virtualkey alt)
+      )
+
+  ;; Virtual key that activates a macro
+  vkmacro (macro h e l l o spc w o r l d)
+)
+
+(dofalias
+  psf (on-press press-virtualkey   sft)
+  rsf (on-press release-virtualkey sft)
+
+  tal (on-press tap-vkey tal)
+  mac (on-press tap-vkey vkmacro)
+
+  isf (on-idle 1000 tap-vkey sft)
+  hfd (hold-for-duration 1000 met)
+)
+
+(doflayer use-virtual-keys
+  @psf @rsf @tal @mac a s d f @isf @hfd
+)
+----
+
+.Older fake keys documentation
+[%collapsible]
+====
+The older configuration style of fake keys are still supported
+but the new style is preferred due to (hopefully) clearer naming.
+
+Fake keys can be defined inside of `doffakekeys`.
+
+The actions are:
+
+* `+(on-press-fakekey <fake key name> <action>)+` or `on↓fakekey`: Activate a fake key
+  action when pressing the key mapped to this action.
+* `+(on-release-fakekey <fake key name> <action>)+` or `on↑fakekey`: Activate a fake key
+  action when releasing the key mapped to this action.
+* `+(on-idle-fakekey <fake key name> <action> <idle time>)+`:
+  Activate a fake key action when kanata has been idle
+  for at least `idle time` milliseconds.
+
+The aforementioned `+<key action>+` can be one of four values:
+
+* `+press+`: Press the fake key. It will not be released until another action
+  triggers a release or tap.
+* `+release+`: Release the fake key. If it's not already pressed, this does nothing.
+* `+tap+`: Press and release the fake key. If it's already pressed, this only releases it.
+* `+toggle+`: Press the fake key if not already pressed, otherwise release it.
+
+.Example:
+[source]
+----
+(doffakekeys
+  ctl lctl
+  sft lsft
+  met lmet
+  alt lalt
+
+  ;; Press all modifiers
+  pal (multi
+        (on-press fakekey ctl press)
+        (on-press-fakekey sft press)
+        (on-press-fakekey met press)
+        (on-press-fakekey alt press)
+      )
+
+  ;; Release all modifiers
+  ral (multi
+        (on-press-fakekey ctl release)
+        (on-press-fakekey sft release)
+        (on-press-fakekey met release)
+        (on-press-fakekey alt release)
+      )
+)
+
+(dofalias
+  psf (on-press-fakekey sft press)
+  rsf (on-press-fakekey sft release)
+
+  pal (on-press-fakekey pal tap)
+  ral (on-press-fakekey ral tap)
+
+  isf (on-idle-fakekey sft tap 1000)
+)
+
+(doflayer use-virtual-keys
+  @psf @rsf @pal @ral a s d f @isf
+)
+----
+
+====
+
+For more context, you can read the
+https://github.com/jtroo/kanata/issues/80[issue that sparked the creation of virtual keys].
+
+Something notable about virtual keys is that they don't always interrupt the state
+of an active `+tap-dance-eager+`. If a `macro` action is assigned to a virtual
+key, this won't interrupt a tap dance. However, most other action types,
+notably a "normal" key action like `+rsft+` will still interrupt a tap dance.
+
+[[sequences]]
+=== Sequences
+
+The `+sldr+` action makes kanata go into "sequence" mode. The action name is
+short for "sequence leader". This comes from Vim which has the concept of a configurable
+sequence leader key. When in sequence mode, keys are not typed
+(<<sequence-input-mode,by default>>)
+but are saved until one of the following happens:
+
+* A key is typed that does not match any sequence
+* `+sequence-timeout+` milliseconds elapses since the most recent key press
+
+Sequences are configured similarly to `+defvirtualkeys+`. The first parameter of a
+pair must be a defined virtual key name. The second parameter is a list of keys
+that will activate a virtual key tap when typed in the defined order. More
+precisely, the action triggered is:
+
+`+(on-press tap-vkey <virtual key name>)+`
+
+.Example:
+[source]
+----
+(dofseq git-status (g s t))
+(defvirtualkeys git-status (macro g i t spc s t a t u s))
+(dofalias rcl (tap-hold-release 200 200 sldr rctl))
+
+(dofseq
+    dotcom (. S-3)
+    dotorg (. S-4)
+
+    ;;     The shifted letters in parentheses means a single press of lsft
+    ;;     must remain held while both h and then s are pressed.
+    ;;     This is not the same as S-h S-s, which means that the lsft key
+    ;;     must be released and repressed between the h and s presses.
+    https (S-(h s))
+)
+(defvirtualkeys
+    dotcom (macro . c o m)
+    dotorg (macro . o r g)
+    https (macro h t t p s S-; / /)
+)
+----
+
+There are 10 special keys with names `nop0-nop9` which kanata treats specially.
+Kanata will never send OS events for these keys
+but they can still participate in sequences.
+
+See an example of using the nop keys
+alongside templates to define sequences below.
+
+.Example:
+[source]
+----
+(dofsrc f7   f8   f9   f10)
+(doflayer base
+        sldr nop0 nop1 nop2)
+(doftemplate seq (vk-name input-keys output-action)
+        sldr(defvirtualkeys $vk-name $output-action)
+        sldr(dofseq $vk-name $input-keys)
+)
+;; template-expand has a shortened form: t!
+(t! seq dotcom (nop0 nop1) (macro . c o m))
+(t! seq dotorg (nop0 nop2) (macro . o r g))
+----
+
+If 10 special nop keys do not seem sufficient,
+you can get creative with your sequences and treat some as a prefix modifier.
+For example, you can get 24 "keys" by treating `nop0-nop5` as normal
+while treating `nop6-nop9` as prefixes that are always followed by a second nop key.
+
+.Example:
+[source]
+----
+(dofalias
+  nop0 nop0
+  ;; ...
+  nop5 nop5
+  nop6 (macro nop6 nop0)
+  ;; ...
+  nop11 (macro nop6 nop5)
+  ;; ...
+  nop18 (macro nop9 nop0)
+  ;; ...
+  nop23 (macro nop9 nop5)
+)
+----
+
+==== Overlapping keys in any order
+
+Within the key list of `dofseq` configuration items,
+the special `O-` list prefix can be used to denote a set of keys that must
+all be pressed before any are released in order to match the sequence.
+
+For an example, `O-(a b c)` is equivalent to `O-(c b a)`.
+
+.Example:
+[source]
+----
+(defvirtualkey hello (macro h (unshift e l) 5 (unshift l o)))
+(dofseq hello (O-(h l o)))
+----
+
+WARNING: The way that sequences implements this functionality behind the scenes
+is by generating a sequence for every permutation of the overlapping keys.
+This can make kanata use up a lot of memory.
+Due to this, the maximum keys allowed in a given `O-(...)` list is 6,
+but you are still permitted to add more to the sequence,
+including more `O-(...)` lists.
+Doing the above can balloon kanata's memory consumption.
+
+.Sample of more advanced usage
+[%collapsible]
+====
+
+The configuration below showcases context-dependent chording
+with auto-space and auto-deleted spaces from typing punctuation.
+
+For example, chording `(d a y)` and then `(t u e)` will output
+`Tuesday`, while chording `(t u e)` by itself does nothing.
+
+.Example configuration:
+[source]
+----
+(dofsrc f1)
+(doflayer base lrld)
+(dofcfg process-unmapped-keys yes
+	sequence-input-mode visible-backspaced
+	concurrent-tap-hold true)
+(doftemplate seq (vk-name in out)
+	(defvirtualkeys $vk-name $out)
+	(dofseq $vk-name $in))
+
+(defvirtualkeys rls-sft (multi (release-key lsft)(release-key rsft)))
+(dofvar rls-sft (on-press tap-vkey rls-sft))
+(doftemplate rls-sft () $rls-sft 5)
+
+(dofchordsv2
+	(d a y) (macro sldr d (t! rls-sft) a y spc nop0) 200 first-release ()
+	(h l o) (macro h (t! rls-sft) e l l o sldr spc nop0) 200 first-release ()
+)
+(t! seq Monday (d a y spc nop0 O-(m o n)) (macro S-m $rls-sft o n d a y nop9 sldr spc nop0))
+(t! seq Tuesday (d a y spc nop0 O-(t u e)) (macro S-t $rls-sft u e s d a y nop9 sldr spc nop0))
+(t! seq DelSpace_. (spc nop0 .) (macro .))
+(t! seq DelSpace_; (spc nop0 ;) (macro ;))
+----
+
+.Try using the above configuration to type the text:
+[source]
+----
+day;
+Day;
+Tuesday.
+day hello
+hello day
+Hello day.
+hello Tuesday
+Hello Monday;
+----
+
+====
+
+==== Override the global timeout and input mode
+
+An alternative to using `sldr` is the `sequence` action.
+The syntax is `(sequence <timeout>)`.
+This enters sequence mode with a sequence timeout
+different from the globally configured one.
+
+The `sequence` action can also be called with a second parameter.
+The second parameter is an override for `sequence-input-mode`:
+
+----
+(sequence <timeout> <input-mode>)
+----
+
+
+.Example:
+[source]
+----
+;; Enter sequence mode and input . with a timeout of 250
+(dofalias dot-sequence (macro (sequence 250) 10 .))
+
+;; Enter sequence mode and input . with a timeout of 250 and using hidden-delay-type
+(dofalias dot-sequence (macro (sequence 250 hidden-delay-type) 10 .))
+----
+
+==== More about sequences
+
+For more context about sequences, you can read the
+https://github.com/jtroo/kanata/issues/97[design and motivation of sequences].
+You may also be interested in
+https://github.com/jtroo/kanata/blob/main/docs/sequence-adding-chords-ideas.md[the document describing chords in sequences]
+to read about how chords in sequences behave.
+
+[[input-chords]]
+=== Input chords
+
+Not to be confused with <<output-chords-combos,output chords>>, `+chord+`
+actions allow you to perform various actions based on which specific combination
+of input keys are pressed together. Such an unordered combination of keys
+is called a "chord". Each chord can perform a different action, allowing you
+to bind up to `+2^n - 1+` different actions to just `+n+` keys.
+
+Input chords are configured similarly to `+dofalias+` with two extra parameters
+at the beginning of each `+dofchords+` group: the name of the group and a
+timeout value after which a chord triggers if it isn't triggered by a key release
+or press of a non-chord key before the timeout expires.
+
+[source]
+----
+(dofsrc a b c)
+(doflayer default
+  @cha @chb @chc
+)
+
+(dofalias
+  cha (chord example a)
+  chb (chord example b)
+  chc (chord example c)
+)
+
+(dofchords example 500
+  (a      ) a
+  (   b   ) b
+  (a     c) C-v
+  (a  b  c) @three
+)
+----
+
+The first item of each pair specifies the keys that make up a given chord.
+The second item of each pair is the action to be executed when the given chord
+is pressed and may be any regular or advanced action, including aliases. It
+currently cannot however contain another `+chord+` action.
+
+Note that unlike with `+dofseq+`, these keys do not directly correspond to real
+keys and are merely arbitrary labels that make sense within the context of the
+chord.
+They are mapped to real keys in layers by configuring the key in the layer to
+map to a `+(chord name key)+` action where `+name+` is the name of the chords
+group (above `+example+`) and `+key+` is one of these arbitrary labels.
+
+It is perfectly valid to nest these `+chord+` actions that enter "chording mode"
+within other actions like `+tap-dance+` and that will work as one would expect.
+However, this only applies to the first key used to enter "chording mode".
+Once "chording mode" is active, all other keys will be directly handled by
+"chording mode" with no regard for wrapper actions; e.g. if a key is pressed
+and it maps to a tap-hold with a chord as the hold action within, that chord
+key will immediately activate instead of the key needing to be held for the
+timeout period.
+
+**Release behaviour**
+
+For single key actions and output chords — like `lctl` or `S-tab` —
+and for `layer-while-held`,
+an input chord will release the action only when all keys that are part of
+the input chord have been released.
+In other words, if even one key is held for the input chord
+then the output action will be continued to be held,
+but only for the mentioned action categories.
+The behaviour also applies to the actions mentioned above
+when used inside of `multi` but not within any other action.
+
+An exception to the behaviour described above
+for the action categories that would normally apply
+is if a chord decomposition occurs.
+A chord decomposition occurs when you input a chord
+that does not correspond to any action.
+When this happens, kanata splits up the key presses to activate
+other actions from the components of the input chord.
+In this scenario, the behaviour described in the next paragraph will occur.
+
+For chord decompositions and all other action categories,
+the release behaviour is more confusing:
+the output action will end when any key is released during the timeout,
+or if the timeout expires, the output action ends when the *first* key
+that was pressed in the chord gets released.
+This inconsistency is a limitation of the current implementation.
+In these scenarios it is recommended
+to hold down all keys if you want to keep holding
+and to release all keys if you want to do a release.
+This is because it will probably be difficult
+to know which key was pressed first.
+
+If you want to bypass the behaviour of keys being held for chord outputs,
+you could change the chord output actions to be <<macro,macros>> instead.
+Using a macro will guarantee a rapid press+release for the output keys.
+
+[[dofaliasenvcond]]
+=== dofaliasenvcond
+
+NOTE: this configuration item is older and instead you may want to use
+the newer and more generalized <<environment>> configuration.
+
+There is a variant of `dofalias`: `dofaliasenvcond`.
+This variant is parsed similarly,
+but there must be an extra list parameter
+that comes before all of the name-action pairs.
+
+The list must contain two strings.
+In order, these strings are:
+an environment variable name,
+and the environment variable value.
+When the environment variable defined by the name
+has the corresponding value when starting kanata,
+the aliases within will be active.
+Otherwise, the aliases will be skipped.
+
+A use case for `dofaliasenvcond` is when one has multiple devices
+which vary in layout of keys,
+e.g. different special keys on the bottom row.
+Using environment variables, one can use the same kanata
+configuration across those multiple devices
+while changing key behaviours to keep consistent behaviour
+of specific key positions across the multiple devices,
+when the hardware keys at those physical key positions are not
+the same.
+
+
+.Example:
+[source]
+----
+(dofaliasenvcond (LAPTOP lp1)
+  met @lp1met
+)
+
+(dofaliasenvcond (LAPTOP lp2)
+  met @lp2met
+)
+----
+
+.Set environment variables in the current terminal process:
+[source]
+----
+# powershell
+$env:VAR_NAME = "var_value"
+
+# bash
+VAR_NAME=var_value
+----
 
 [[templates]]
 === Templates
-<<table-of-contents,Back to ToC>>
 
-The top-level configuration item `deftemplate`
+The top-level configuration item `doftemplate`
 declares a template that can be expanded multiple times
 via the list item `template-expand`.
 The short form of `template-expand` is `t!`.
 
-The parameters to `deftemplate` in order are:
+The parameters to `doftemplate` in order are:
 
 * Template name
 * List of template variables
@@ -3403,17 +4722,17 @@ you wouldn't want this. Rather than retyping the code with `fork` and
 `unmod` (to release alt) a bunch of times, you could template it like so:
 [source]
 ----
-(deftemplate alt-fork (original-action new-action)
-  (fork $original-action (multi (unmod ralt lalt) $new-action) (lalt ralt))
+(doftemplate alt-fork (original-action new-action)
+  (fork $original-action (multi (unmod (ralt lalt) nop0) $new-action) (lalt ralt))
 )
 (dofsrc 1 2 3)
 (dofalias fn1 (template-expand alt-fork 1 f1))
 ;; Templates are a simple text substitution, so the above is exactly equivalent to:
-;; (dofalias fn1 (fork 1 (multi (unmod ralt lalt) f1) (lalt ralt)))
+;; (dofalias fn1 (fork 1 (multi (unmod (ralt lalt) nop0) f1) (lalt ralt)))
 (dofalias fn2 (template-expand alt-fork 2 f2))
 ;; You can use t! as a short form of template-expand
 (dofalias fn3 (t! alt-fork 3 f3))
-(doflayer default (@fn1 @fn2 @fn3))
+(doflayer default @fn1 @fn2 @fn3)
 ----
 
 .Example 2:
@@ -3425,7 +4744,7 @@ you wouldn't want this. Rather than retyping the code with `fork` and
 ;; This template defines a chord group and aliases that use the chord group.
 ;; The purpose is to easily define the same chord position behaviour
 ;; for multiple layers that have different underlying keys.
-(deftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
+(doftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
   (dofalias
     $alias1 (chord $chordgroupname $k1)
     $alias2 (chord $chordgroupname $k2)
@@ -3455,7 +4774,7 @@ you wouldn't want this. Rather than retyping the code with `fork` and
 [source]
 ----
 ;; This template defines a home row that customizes a single key's behaviour
-(deftemplate home-row (j-behaviour)
+(doftemplate home-row (j-behaviour)
   a s d f g h $j-behaviour k l ; '
 )
 
@@ -3493,7 +4812,7 @@ then the whole `if-equal` list is removed from the template.
 
 .Example 4:
 ----
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-equal $version v1 j)
   (if-equal $version v2 (tap-hold 200 200 j lctl))
@@ -3533,7 +4852,7 @@ the second list-of-strings parameter
 ;; dofvar is parsed AFTER template expansion occurs.
 (dofvar a hello)
 
-(deftemplate template1 (var1)
+(doftemplate template1 (var1)
   a (if-equal hello $var1 b) c
 )
 
@@ -3542,7 +4861,7 @@ the second list-of-strings parameter
 ;; and they are not equal.
 (template-expand template1 $a)
 
-(deftemplate template2 (var1)
+(doftemplate template2 (var1)
   a (if-equal $a $var1 b) c
 )
 
@@ -3553,17 +4872,16 @@ the second list-of-strings parameter
 (template-expand template2 $a)
 ----
 
-[[concat-in-deftemplate]]
-==== concat in deftemplate
+[[concat-in-doftemplate]]
+==== concat in doftemplate
 
 Like <<concat-in-dofvar,concat in dofvar>>,
-a list beginning with `concat` within the content of `deftemplate`
+a list beginning with `concat` within the content of `doftemplate`
 will be replaced with a single string that consists of
 all the subsequent items in the list concatenated to each other.
 
 [[custom-tap-hold-behaviour]]
 === Custom tap-hold behaviour
-<<table-of-contents,Back to ToC>>
 
 This is not currently configurable without modifying the source code, but if
 you're willing and/or capable, there is a tap-hold behaviour that is currently
@@ -3580,7 +4898,6 @@ https://github.com/jtroo/kanata/issues/128[motivation for custom tap-hold behavi
 
 [[fancy-key-symbols]]
 === Fancy key symbols
-<<table-of-contents,Back to ToC>>
 
 Instead of using the same `+a-z+` letters for special keys, e.g., `+lsft+` for `+LeftShift+`
 you can use much shorter, yet more visible, key symbols like `+‹⇧+`.
@@ -3593,7 +4910,6 @@ https://github.com/jtroo/kanata/blob/main/cfg_samples/fancy_symbols.kbd[example 
 
 [[windows-only-work-elevated]]
 === Windows only: enable in elevated windows
-<<table-of-contents,Back to ToC>>
 
 The default `kanata.exe` binary doesn't work in elevated windows (run with administrative privileges),
 e.g., `Control Panel`. However, you can use AutoHotkey's "EnableUIAccess" script to self-sign the binary,
@@ -3610,7 +4926,6 @@ cargo build --win_manifest
 
 [[windows-only-win-tray]]
 === Windows only: win-tray
-<<table-of-contents,Back to ToC>>
 
 Kanata can be compiled as a Windows GUI tray app with the feature flag `gui`.
 This can simplify launching the app on user login by placing a `.lnk`
@@ -3634,14 +4949,13 @@ only available via an app capable of viewing `OutputDebugString` debugs, e.g., h
 
 [[test-your-config]]
 === Test your config
-<<table-of-contents,Back to ToC>>
 
 Kanata has a `+kanata_simulated_input+` tool
 to help test your configuration in a predictable manner.
 
 You can try it out on https://jtroo.github.io/[GitHub pages].
 
-Code for the CLI tool can be found under link:../simulated_input/[simulated_input].
+Code for the CLI tool can be found under link:https://github.com/jtroo/kanata/blob/main/simulated_input/[simulated_input].
 
 Instead of physically typing to test something
 and wondering whether you didn't get the expected result because your config is wrong or
@@ -3668,3 +4982,278 @@ And key names are defined in the https://github.com/jtroo/kanata/blob/main/parse
 for example, `1` for the numeric key 1 or `kp1`/`🔢₁` for the keypad numeric key 1
 
 Using unicode symbols `🕐`,`↓`,`↑`,`⟳` allows skipping the `:` separator, e.g., `↓k` ≝ `↓:k` ≝ `d:k`
+
+[[zippychord]]
+=== Zippychord
+
+**Reference**
+
+You may define a single `+dofzippy-experimental+` configuration item.
+As suggested by the -experimental label, this feature is relatively recent.
+When using this you are at higher likelihood of bugs and breaking changes.
+
+.Configuration syntax within the kanata configuration
+[source]
+----
+(dofzippy-experimental
+  $zippy-filename ;; required
+  on-first-press-chord-deadline $deadline-millis  ;; optional
+  idle-reactivate-time          $idle-time-millis ;; optional
+  smart-space                   $smart-space-cfg  ;; optional
+  smart-space-punctuation (                       ;; optional
+    $punc1 $punc2 ... $puncN)
+  output-character-mappings (    ;; optional
+    $character1 $output-mapping1
+    $character2 $output-mapping2
+    ;; ...
+    $characterN $output-mappingN
+  )
+)
+----
+
+[cols="1,4"]
+|===
+| `$zippy-filename`
+| Relative or absolute file path.
+If relative, its path is relative to
+the directory containing the kanata configuration file.
+This must be the first item following `dofzippy-experimental`.
+
+| `$deadline-millis`
+| Number of milliseconds.
+After the first press while zippy is enabled,
+if no chord activates within this configured time,
+zippy is temporarily disabled.
+
+| `$idle-time-millis`
+| Number of milliseconds.
+After typing ends and this configured number of milliseconds elapses,
+zippy will be re-enabled from being temporarily disabled.
+
+| `$smart-space-cfg`
+| Determines the smart space behaviour.
+The options are `none`, `add-space-only`, and `full`.
+With `none`, outputs are typed as-is.
+With `add-space-only`, spaces are automatically added after outputs
+which end with neither a space or a backspace ⌫.
+With `full`, the `add-space-only` behaviour applies
+alongside additional behaviour:
+typing punctuation (default characters: `, . ;`)
+after a zippy activation will delete a prior automatically-added space.
+
+| `$punc`
+| A character defined in `output-character-mappings`
+or a known key name, which shall be considered as punctuation.
+The `smart-space-punctuation` configuration
+will overwrite the default punctuation list
+considered by smart-space;
+if you want to include the default characters,
+you must include them in this configuration.
+
+| `$character`
+| A single unicode codepoint for use
+in the output column of the zippy configuration file.
+
+| `$output-mapping`
+| Key or output chord to tell kanata how to type `$character`
+when seen in the zippy file output column.
+Must be a single key or output chord.
+The output chord may contain `AG-` to tell kanata to press with AltGr
+and may contain `S-` to tell kanata to press with Shift.
+
+The list items `no-erase` and `single-output` are also usable in this position.
+
+| `no-erase`
+| Accepts a single key or output chord as a parameter.
+The zippy system will not backspace this character
+in case of auto-erasure by a superset chord or followup chord.
+Use for dead keys or compose keys.
+
+| `single-output`
+| Accepts one or more keys or output chords as a parameter.
+The zippy system send only one backspace
+in case of auto-erasure by a superset chord or followup chord.
+Use for a dead key or compose key sequence with one output symbol.
+|===
+
+Regarding output mappings,
+you can configure the output of the special-lisp-syntax characters
+`+) ( "+` via these lines:
+
+[source]
+----
+    ")"    $right-paren-output
+    "("    $left-paren-output
+    r#"""# $double-quote-output
+----
+
+As an example, for the US layout these should be the correct lines:
+
+[source]
+----
+    ")"     S-0
+    "("     S-9
+    r#"""#  S-'
+----
+
+.Configuration syntax within the zippy configuration file
+[source]
+----
+// This is a comment.
+//          inputs            ↹  outputs
+$chord1 $follow-chord1.1...1.M	$output1
+$chord2 $follow-chord2.1...2.M	$output2
+// ...
+$chordN $follow-chordN.1...N.M	$outputN
+----
+
+The format is two columns separated by a single Tab character.
+The first column is input and the second is output.
+
+[cols="1,4"]
+|===
+|`$chord`
+| A set of characters.
+You can use space by including it as the first character in the chord;
+for an example see `Alphabet` in the sample below.
+With 0 optional follow chords,
+the corresponding output on the same line (`$output`)
+will activate when zippy is enabled
+and all the defined chord keys are pressed simultaneously.
+The order of presses is not important.
+
+| `$chord-follow`
+| 0 or more chords, used the same way as `$chord`.
+Having follow chords means the `$output` on the same line
+will activate upon first activating the earlier chord(s) in the same line,
+releasing all keys, and pressing the keys in `$chord-followN.M`.
+Follow chords are separated from the previous chord by a space.
+If using a space in the follow chord, use two spaces;
+for an example see `Washington` in the sample below.
+
+| `$output`
+| The characters to type when the chord and optional follow chord(s)
+are all pressed by the user.
+This is separated from the input chord column
+by a single Tab character.
+The characters are typed in sequence
+and must all be singular-name key names
+as one would configure in `dofsrc`.
+A capitalized single-character key name
+will be parsed successfully
+and these will be outputted alongside Shift to output the capitalized key.
+Additionally, `output-character-mappings` configuration can be used
+to inform kanata of additional mappings that may use Shift or AltGr.
+|===
+
+**Examples**
+
+.Sample kanata configuration
+[source]
+----
+(dofzippy-experimental
+  zippy.txt
+  on-first-press-chord-deadline 500
+  idle-reactivate-time          500
+  smart-space-punctuation (? ! . , ; :)
+  output-character-mappings (
+    ;; This should work for US international.
+    ! S-1
+    ? S-/
+    % S-5
+    "(" S-9
+    ")" S-0
+    : S-;
+    < S-,
+    > S-.
+    r#"""# S-'
+    | S-\
+    _ S--
+    ® AG-r
+    ’ (no-erase `)
+    é (single-output ' e)
+  )
+)
+----
+
+.Sample zippy file content
+
+[source]
+----
+dy	day
+dy 1	Monday
+dy 2	Tuesday
+ abc	alphabet
+ w  a	Washington
+gi	git
+gi f p	git fetch -p
+----
+
+**Description**
+
+Zippychord is yet another chording mechanism in Kanata.
+The inspiration behind it is primarily the
+https://github.com/psoukie/zipchord[zipchord project].
+The name is similar; it is named "zippy" instead of "zip" because
+Kanata's implementation is not a port and does not aim for 100%
+behavioural compatibility.
+
+The intended use case is shorthands, or accelerating character output.
+Within zippychord, inputs are keycode chords or sequences,
+and the outputs are also purely keycodes.
+In other words, all other actions are unsupported;
+e.g. layers, switch, one-shot.
+
+Zippychord behaves on outputted keycodes, i.e. the key outputs
+after kanata has finished processing your
+inputs, layers, switch logic and other configurations.
+This is similar to how sequences operate
+and is unlike chords(v1) and chordsv2.
+Furthermore, outputs are all eager like `visible-backspaced` on sequences.
+If a zippchord activation occurs, typed keys are backspaced.
+
+To give an example, if one configures zippychord with a line like:
+
+[source]
+----
+gi	git
+----
+
+then either of the following typing event sequences
+will erase the input characters
+and then proceed to type the output "git"
+like if it was `(macro bspc bspc g i t)`.
+
+[source]
+----
+(press g) (press i)
+(press i) (press g)
+----
+
+Note that there aren't any release events listed.
+To contrast, the following event sequence would not result in an activation:
+
+[source]
+----
+(press g) (release g) (press i)
+----
+
+Zippychord supports fully overlapping chords and sequences.
+For example, this configuration is allowed:
+
+[source]
+----
+gi	git␣
+gi s	git␣status
+gi c	git checkout␣
+gi c b	git checkout -b␣
+gi c a	git commit --amend␣
+gi c n	git commit --amend --no-edit
+gi c a m	git commit --amend -m 'FIX_THIS_COMMIT_MESSAGE'
+----
+
+When you begin with the `(g i)` chord, you can follow up
+with various character sequences to output different git commands.
+This use case is quite similar to git aliases.
+One advantage of zippychord is that it eagerly shows you
+the true underlying command as you type.

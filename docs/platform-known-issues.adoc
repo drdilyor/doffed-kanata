@@ -18,11 +18,6 @@ which map to the binaries
 
 == Windows 11 LLHOOK
 
-* The emoji picker does not work properly
-** https://github.com/jtroo/kanata/issues/240
-
-== Windows 10+11 LLHOOK
-
 * Mouse inputs cannot be used for processing or remapping
 ** https://github.com/jtroo/kanata/issues/108
 ** https://github.com/jtroo/kanata/issues/170
@@ -38,7 +33,7 @@ which map to the binaries
 ** https://github.com/jtroo/kanata/issues/250
 ** https://github.com/jtroo/kanata/issues/430
 ** https://github.com/espanso/espanso/issues/1488
-* AltGr can misbehave
+* AltGr / ralt / Right Alt can misbehave
 ** https://github.com/jtroo/kanata/blob/main/docs/config.adoc#windows-only-windows-altgr
 * NumLock state can mess with arrow keys in unexpected ways
 ** Does not affect winiov2 variant
@@ -51,7 +46,7 @@ without also having the shift keys in `dofsrc` will break shift highlighting
 ** https://github.com/jtroo/kanata/issues/858
 ** Workaround: add shift keys to `dofsrc` or use `process-unmapped-keys yes` in `dofcfg`
 
-== Windows 10+11 Interception
+== Windows 11 Interception
 
 * Sleeping your system or unplugging/replugging devices enough times causes
   inputs to stop working
@@ -67,6 +62,7 @@ without also having the shift keys in `dofsrc` will break shift highlighting
 * Key repeats can occur when they normally wouldn't in some cases
 ** https://github.com/jtroo/kanata/discussions/422
 ** https://github.com/jtroo/kanata/issues/450
+** https://github.com/jtroo/kanata/issues/1441
 * Unicode support has limitations, using xkb is a more consistent solution
 ** https://github.com/jtroo/kanata/discussions/703
 * Key actions can behave incorrectly due to the rapidity of key events
@@ -81,5 +77,5 @@ and explicitly map keys in `dofsrc` instead
 
 == MacOS
 
-* Mouse output actions are not implemented
+* Only left, right, and middle mouse buttons are implemented for clicking
 * Mouse input processing is not implemented

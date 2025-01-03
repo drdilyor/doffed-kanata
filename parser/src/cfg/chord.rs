@@ -12,10 +12,20 @@ pub(crate) fn parse_defchordv2(
     exprs: &[SExpr],
     s: &ParserState,
 ) -> Result<ChordsForKeys<'static, KanataCustom>> {
+    if exprs[0].atom(None).expect("should be atom") == "dofchordsv2-experimental" {
+        log::warn!(
+            "You should replace dofchordsv2-experimental with dofchordsv2.\n\
+             Using -experimental will be invalid in the future."
+        );
+    }
+
     let mut chunks = exprs[1..].chunks_exact(5);
     let mut chords_container = ChordsForKeys::<'static, KanataCustom> {
         mapping: FxHashMap::default(),
     };
+
+    let mut all_participating_key_sets = FxHashSet::default();
+
     let all_chords = chunks
         .by_ref()
         .flat_map(|chunk| match chunk[0] {
@@ -36,11 +46,15 @@ pub(crate) fn parse_defchordv2(
                 let chord_definitions = parse_chord_file(file_name).unwrap();
                 let processed = chord_definitions.iter().map(|chord_def| {
                     let chunk = chord_translation.translate_chord(chord_def);
-                    parse_single_chord(&chunk, s)
+                    parse_single_chord(&chunk, s, &mut all_participating_key_sets)
                 });
                 Ok::<_, ParseError>(processed.collect_vec())
             }
-            _ => Ok(vec![parse_single_chord(chunk, s)]),
+            _ => Ok(vec![parse_single_chord(
+                chunk,
+                s,
+                &mut all_participating_key_sets,
+            )]),
         })
         .flat_map(|vec_result| vec_result.into_iter())
         .collect::<Vec<Result<_>>>();
@@ -48,36 +62,20 @@ pub(crate) fn parse_defchordv2(
         .iter()
         .filter_map(|r| r.as_ref().err())
         .collect::<Vec<_>>();
-    if !unsuccessful.is_empty() {
-        bail_expr!(
-            &exprs[0],
-            "Error parsing chord definition:\n{}",
-            unsuccessful
-                .iter()
-                .map(|e| e.msg.clone())
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
+    if let Some(e) = unsuccessful.first() {
+        return Err((*e).clone());
     }
-    let successful = all_chords.into_iter().filter_map(Result::ok).collect_vec();
 
-    let mut all_participating_key_sets = FxHashSet::default();
+    let successful = all_chords.into_iter().filter_map(Result::ok).collect_vec();
     for chord in successful {
-        if !all_participating_key_sets.insert(chord.participating_keys) {
-            ParseError::new_without_span(
-                "This chord has previously been defined.\n\
-                Only one set of chords must exist for one key combination.",
-            );
-        } else {
-            for pkey in chord.participating_keys.iter().copied() {
-                //log::trace!("chord for key:{pkey:?} > {chord:?}");
-                chords_container
-                    .mapping
-                    .entry(pkey)
-                    .or_insert(ChordsForKey { chords: vec![] })
-                    .chords
-                    .push(s.a.sref(chord.clone()));
-            }
+        for pkey in chord.participating_keys.iter().copied() {
+            //log::trace!("chord for key:{pkey:?} > {chord:?}");
+            chords_container
+                .mapping
+                .entry(pkey)
+                .or_insert(ChordsForKey { chords: vec![] })
+                .chords
+                .push(s.a.sref(chord.clone()));
         }
     }
     let rem = chunks.remainder();
@@ -91,8 +89,18 @@ pub(crate) fn parse_defchordv2(
     Ok(chords_container)
 }
 
-fn parse_single_chord(chunk: &[SExpr], s: &ParserState) -> Result<ChordV2<'static, KanataCustom>> {
+fn parse_single_chord(
+    chunk: &[SExpr],
+    s: &ParserState,
+    all_participating_key_sets: &mut FxHashSet<Vec<u16>>,
+) -> Result<ChordV2<'static, KanataCustom>> {
     let participants = parse_participating_keys(&chunk[0], s)?;
+    if !all_participating_key_sets.insert(participants.clone()) {
+        bail_expr!(
+            &chunk[0],
+            "Duplicate participating-keys, key sets may be used only once."
+        );
+    }
     let action = parse_action(&chunk[1], s)?;
     let timeout = parse_timeout(&chunk[2], s)?;
     let release_behaviour = parse_release_behaviour(&chunk[3], s)?;

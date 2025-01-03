@@ -86,6 +86,13 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;;
   ;; linux-continue-if-no-devs-found yes
 
+  ;; Kanata on Linux automatically detects and grabs input devices
+  ;; when none of the explicit device configurations are in use.
+  ;; In case kanata is undesirably grabbing mouse-like devices,
+  ;; you can use a configuration item to change detection behaviour.
+  ;;
+  ;; linux-device-detect-mode keyboard-only
+
   ;; On Linux, you can ask kanata to run `xset r rate <delay> <rate>` on startup
   ;; and on live reload via the config below. The first number is the delay in ms
   ;; and the second number is the repeat rate in repeats/second.
@@ -132,6 +139,16 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;;
   ;;   linux-unicode-termination space
 
+  ;; Kanata on Linux needs to declare a "bus type" for its evdev output device.
+  ;; The options are USB and I8042. The default is I8042.
+  ;; Using USB can break disable-touchpad-while-typing on Wayland.
+  ;; But using I8042 appears to break some other scenarios. Thus it is configurable.
+  ;;
+  ;; Examples:
+  ;;
+  ;;   linux-output-device-bus-type USB
+  ;;   linux-output-device-bus-type I8042
+
   ;; There is an optional configuration entry for Windows to help mitigate strange
   ;; behaviour of AltGr if your layout uses that. Uncomment one of the items below
   ;; to change what kanata does with the key.
@@ -169,7 +186,10 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 
   ;; We need to set it to yes in this kanata.kbd example config to allow the use of __ and ___
   ;; in the doflayer-custom-map example below in the file
-  process-unmapped-keys yes
+
+  ;; This also accepts a list parameter (all-except key1 ... keyN)
+  ;; which behaves like "yes" but excludes the keys within the list.
+  process-unmapped-keys (all-except f19)
 
   ;; Disable all keys not mapped in dofsrc.
   ;; Only works if process-unmapped-keys is also yes.
@@ -254,6 +274,14 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; changes will be logged.
   ;;
   ;; log-layer-changes no
+
+  ;; This configuration will press and then immediately release the non-modifier key
+  ;; as soon as the override activates, meaning you are unlikely as a human to ever
+  ;; release modifiers first, which can result in unintended behaviour.
+  ;;
+  ;; The downside of this configuration is that the non-modifier key
+  ;; does not remain held which is important to consider for your use cases.
+  override-release-on-activation yes
 )
 
 ;; doflocalkeys-* enables you to define and use key names that match your locale
@@ -552,6 +580,10 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;; This use case for multi is typing an all-caps string.
   alp (multi lsft a b c d e f g h i j k l m n o p q r s t u v w x y z)
 
+  ;; Within multi you can also include reverse-release-order to release keys
+  ;; from last-to-first order instead of first-to-last which is the default.
+  S-a-reversed (multi lsft a reverse-release-order)
+
   ;; Chords using the shortcut syntax. These ones are used for copying/pasting
   ;; from some Linux terminals.
   csv C-S-v
@@ -574,12 +606,16 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   tbm (macro A-(tab 200 tab 200 tab) 200 S-A-(tab 200 tab 200 tab))
   hpy (macro S-i spc a m spc S-(h a p p y) spc m y S-f r S-i e S-n d @🙃)
 
-  rls (macro-release-cancel 1 500 bspc S-1 500 bspc S-2)
+  rls (macro-release-cancel Digit1 500 bspc S-1 500 bspc S-2)
+  cop (macro-cancel-on-press Digit1 500 bspc S-1 500 bspc S-2)
+  rlpr (macro-release-cancel-and-cancel-on-press Digit1 500 bspc S-1 500 bspc S-2)
 
   ;; repeat variants will repeat while held, once ALL macros have ended,
   ;; including the held macro.
   mr1 (macro-repeat mltp)
   mr2 (macro-repeat-release-cancel mltp)
+  mr3 (macro-repeat-cancel-on-press mltp)
+  mr4 (macro-repeat-release-cancel-and-cancel-on-press mltp)
 
   ;; Kanata also supports dynamic macros. Dynamic macros can be nested, but
   ;; cannot recurse.
@@ -603,10 +639,23 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   de{ (unshift ralt 7)
   de[ (unshift ralt 8)
 
+  ;; unmod can optionally take a list as the first parameter,
+  ;; and then will only temporarily remove
+  ;; the listed modifiers instead of all modifiers.
+  unalt-a (unmod (lalt ralt) a)
+
   ;; unicode accepts a single unicode character. The unicode character will
   ;; not be automatically repeated by holding the key down. The alias name
   ;; is the unicode character itself and is referenced by @🙁 in doflayer.
   🙁 (unicode 🙁)
+
+  ;; You may output parentheses or double quotes using unicode
+  ;; by quotes as well as special quoting syntax.
+  lp1 (unicode r#"("#)
+  rp1 (unicode r#")"#)
+  dq (unicode r#"""#)
+  lp2 (unicode "(")
+  rp2 (unicode ")")
 
   ;; fork accepts two actions and a key list. The first (left) action will
   ;; activate by default. The second (right) action will activate if any of
@@ -670,6 +719,12 @@ If you need help, please feel welcome to ask in the GitHub discussions.
     ((layer dvorak)) x break
     ((layer qwerty)) y break
 
+    ;; base-layer evaluates to `true` if the base layer matches the given name
+    ;; The base layer is the most recent target of layer-switch.
+    ;; The base layer is not always the active layer.
+    ((base-layer dvorak)) x break
+    ((base-layer qwerty)) y break
+
     ;; default case, empty list always evaluates to true.
     ;; break vs. fallthrough doesn't matter here
     () c break
@@ -689,12 +744,46 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   ;;
   ;; cm1 (cmd bash -c "echo hello world")
   ;; cm2 (cmd rm -fr /tmp/testing)
+
+  ;; One variant of `cmd` is `cmd-log`, which lets you control how
+  ;; running command, stdout, stderr, and execution failure are logged.
+  ;;
+  ;; The command takes two extra arguments at the beginning `<log_level>`,
+  ;; and `<error_log_level>`. `<log_level>` controls where the name
+  ;; of the command is logged, as well as the success message and command
+  ;; stdout and stderr.
+  ;;
+  ;; `<error_log_level>` is only used if there is a failure executing the initial
+  ;; command. This can be if there is trouble spawning the command, or
+  ;; the command is not found. This means if you use `bash -c "thisisntacommand"`, as
+  ;; long as bash starts up correctly, nothing would be logged to this channel, but
+  ;; something like `thisisntacommand` would be.
+  ;;
+  ;; The log level can be `debug`, `info`, `warn`, `error`, or `none`.
+  ;;
+  ;; cmd-log info error bash -c "echo these are the default levels"
+  ;; cmd-log none none bash -c "echo nothing back in kanata logs"
+  ;; cmd-log none error bash -c "only if command fails"
+  ;; cmd-log debug debug bash -c "echo log, but require changing verbosity levels"
+  ;; cmd-log warn warn bash -c "echo this probably isn't helpful"
+
+  ;; Another variant of `cmd` is `cmd-output-keys`. This reads the output
+  ;; of the command and treats it as an S-Expression, similarly to `macro`.
+  ;; However, only delays, keys, chords, and chorded lists are supported.
+  ;; Other actions are not.
+  ;;
+  ;; bash: type date-time as YYYY-MM-DD HH:MM
+  ;; cmd-output-keys bash -c "date +'%F %R' | sed 's/./& /g' | sed 's/:/S-;/g' | sed 's/\(.\{20\}\)\(.*\)/\(\1 spc \2\)/'"
 )
 
 ;; The underscore _ means transparent. The key on the base layer will be used
 ;; instead. XX means no-op. The key will do nothing.
+;;
+;; A similar concept to transparent, use-dofsrc means the key will always
+;; behave as the key as defined by dofsrc.
+(dofalias src use-dofsrc)
 (doflayer numbers
-  _    _    _    _    _    _    nlk  kp7  kp8  kp9  _    _    _    _
+  @src _    _    _    _    _    nlk  kp7  kp8  kp9  _    _    _    _
   _    _    _    _    _    XX   _    kp4  kp5  kp6  -    _    _    _
   _    _    C-z  _    _    XX   _    kp1  kp2  kp3  +    _    _
   _    C-z  C-x  C-c  C-v  XX   _    kp0  kp0  .    /    _
@@ -756,6 +845,13 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   osr (one-shot-release 500 lsft)
   opp (one-shot-press-pcancel 500 lsft)
   orp (one-shot-release-pcancel 500 lsft)
+
+  ;; one-shot-pause-processing can be useful in some cases
+  ;; to preserve an activated one-shot state when it otherwise
+  ;; would get deactivated by some action that isn't intended
+  ;; to consume the one-shot.
+  ;; The unit is number of milliseconds.
+  ops (one-shot-pause-processing 5)
 
   ;; Alias for tap-dance which will activate one of the actions in the action
   ;; list depending on how many taps were done. Tapping once will output the
@@ -1065,6 +1161,7 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   pal (on-press-fakekey pal tap)
   ral (on-press-fakekey ral tap)
   rdl (on-idle-fakekey ral tap 1000)
+  hfd (hold-for-duration 1000 met)
 
   ;; Test of on-press-fakekey and on-release-fakekey in a macro
   t1 (macro-release-cancel @fsp 5 a b c @fsr 5 c b a)
@@ -1218,7 +1315,7 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 ;; (include included-file.kbd)
 
 
-;; The top-level item `deftemplate` declares a template
+;; The top-level item `doftemplate` declares a template
 ;; which can be expanded multiple times to reduce repetition.
 ;;
 ;; Expansion of a template is done via `expand-template`.
@@ -1226,7 +1323,7 @@ If you need help, please feel welcome to ask in the GitHub discussions.
 ;; This template defines a chord group and aliases that use the chord group.
 ;; The purpose is to easily define the same chord position behaviour
 ;; for multiple layers that have different underlying keys.
-(deftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
+(doftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
   (dofalias
     $alias1 (chord $chordgroupname $k1)
     $alias2 (chord $chordgroupname $k2)
@@ -1257,17 +1354,17 @@ If you need help, please feel welcome to ask in the GitHub discussions.
   _    _    _              _              _    _    _
 )
 
-;; Within a deftemplate you can use if-equal to conditionally insert content
+;; Within a doftemplate you can use if-equal to conditionally insert content
 ;; into the template.
 
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-equal $version v1 j)
   (if-equal $version v2 (tap-hold 200 200 j lctl))
    k l ; '
 )
 
-(deftemplate common-overrides ()
+(doftemplate common-overrides ()
   (lctl 7) (lctl lsft tab)
   (lctl 9) (lctl tab)
   (lalt 7) (lalt lsft tab)
@@ -1300,7 +1397,7 @@ Global input chords.
 
 Syntax (5-tuples):
 
-    (dofchordsv2-experimental
+    (dofchordsv2
       (participating-keys1) action1 timeout1 release-behaviour1 (disabled-layers1)
         ...
       (participating-keysN) actionN timeoutN release-behaviourN (disabled-layersN)
@@ -1308,8 +1405,56 @@ Syntax (5-tuples):
 
 |#
 
-(dofchordsv2-experimental
+(dofchordsv2
   (a b)      c                200 all-released  (arrows)
   (a b z)   (macro h e l l o) 250 first-release (arrows)
   (a b z y) (macro b y e)     400 first-release (arrows)
 )
+
+#|
+
+Yet another chording implementation - zippychord:
+
+
+;; This is a sample for US international layout.
+(dofzippy-experimental
+  zippy.txt
+  on-first-press-chord-deadline 500
+  idle-reactivate-time          500
+  smart-space-punctuation (? ! . , ; :)
+  output-character-mappings (
+    ! S-1
+    ? S-/
+    % S-5
+    "(" S-9
+    ")" S-0
+    : S-;
+    < S-,
+    > S-.
+    r#"""# S-'
+    | S-\
+    _ S--
+    ® AG-r
+    ;; In case you use dead keys or compose keys
+    ;; where multiple keys are pressed
+    ;; to produce a single backspaceable symbol,
+    ;; use no-erase or single-output
+    ’ (no-erase `)
+    é (single-output ' e)
+  )
+)
+
+Example file content of zippy.txt:
+---
+dy	day
+dy 1	Monday
+ abc	Alphabet
+r df	recipient
+ w  a	Washington
+rq	request
+rqa	request assistance
+---
+
+You can read about zippychord in more detail in the configuration guide.
+
+|#

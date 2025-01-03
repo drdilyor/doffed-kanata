@@ -76,6 +76,8 @@ type ActionQueue<'a, T> =
 type Delay = u16;
 pub(crate) type QueuedAction<'a, T> = Option<(KCoord, Delay, &'a Action<'a, T>)>;
 
+const REAL_KEY_ROW: u8 = 0;
+
 const HISTORICAL_EVENT_LEN: usize = 8;
 const EXTRA_WAITING_LEN: usize = 8;
 #[test]
@@ -123,28 +125,6 @@ pub struct History<T> {
 pub struct HistoricalEvent<T> {
     pub event: T,
     pub ticks_since_occurrence: u16,
-}
-
-#[derive(Clone)]
-pub struct HistoricalEvents<'a, T> {
-    events: arraydeque::Iter<'a, T>,
-    ticks_since_occurrences: arraydeque::Iter<'a, u16>,
-}
-
-impl<'a, T> Iterator for HistoricalEvents<'a, T>
-where
-    T: Copy,
-{
-    type Item = HistoricalEvent<T>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let event = *self.events.next()?;
-        let ticks_since_occurrence = *self.ticks_since_occurrences.next()?;
-        Some(HistoricalEvent {
-            event,
-            ticks_since_occurrence,
-        })
-    }
 }
 
 impl<T> History<T>
@@ -253,7 +233,7 @@ pub enum CustomEvent<'a, T: 'a> {
     /// The given custom action key is released.
     Release(&'a T),
 }
-impl<'a, T> CustomEvent<'a, T> {
+impl<T> CustomEvent<'_, T> {
     /// Update an event according to a new event.
     ///
     ///The event can only be modified in the order `NoEvent < Press <
@@ -270,13 +250,17 @@ impl<'a, T> CustomEvent<'a, T> {
 
 /// Metadata about normal key flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct NormalKeyFlags(u16);
+pub struct NormalKeyFlags(pub u16);
 
-const NORMAL_KEY_FLAG_CLEAR_ON_NEXT_ACTION: u16 = 0x0001;
+pub const NORMAL_KEY_FLAG_CLEAR_ON_NEXT_ACTION: u16 = 0x0001;
+pub const NORMAL_KEY_FLAG_CLEAR_ON_NEXT_RELEASE: u16 = 0x0002;
 
 impl NormalKeyFlags {
-    pub fn clear_on_next_action(self) -> bool {
+    pub fn nkf_clear_on_next_action(self) -> bool {
         (self.0 & NORMAL_KEY_FLAG_CLEAR_ON_NEXT_ACTION) == NORMAL_KEY_FLAG_CLEAR_ON_NEXT_ACTION
+    }
+    pub fn nkf_clear_on_next_release(self) -> bool {
+        (self.0 & NORMAL_KEY_FLAG_CLEAR_ON_NEXT_RELEASE) == NORMAL_KEY_FLAG_CLEAR_ON_NEXT_RELEASE
     }
 }
 
@@ -306,21 +290,21 @@ pub enum State<'a, T: 'a> {
     SeqCustomActive(&'a T),
     Tombstone,
 }
-impl<'a, T> Copy for State<'a, T> {}
-impl<'a, T> Clone for State<'a, T> {
+impl<T> Copy for State<'_, T> {}
+impl<T> Clone for State<'_, T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<'a, T: 'a> State<'a, T> {
-    fn keycode(&self) -> Option<KeyCode> {
+    pub fn keycode(&self) -> Option<KeyCode> {
         match self {
             NormalKey { keycode, .. } => Some(*keycode),
             FakeKey { keycode } => Some(*keycode),
             _ => None,
         }
     }
-    fn coord(&self) -> Option<KCoord> {
+    pub fn coord(&self) -> Option<KCoord> {
         match self {
             NormalKey { coord, .. }
             | LayerModifier { coord, .. }
@@ -360,7 +344,10 @@ impl<'a, T: 'a> State<'a, T> {
     }
     pub fn release_state(&self, s: ReleasableState) -> Option<Self> {
         match (*self, s) {
-            (NormalKey { keycode: k1, .. }, ReleasableState::KeyCode(k2)) => {
+            (
+                NormalKey { keycode: k1, .. } | FakeKey { keycode: k1 },
+                ReleasableState::KeyCode(k2),
+            ) => {
                 if k1 == k2 {
                     None
                 } else {
@@ -389,6 +376,15 @@ impl<'a, T: 'a> State<'a, T> {
             _ => None,
         }
     }
+    pub fn clear_on_next_release(&self) -> bool {
+        match self {
+            NormalKey { flags, .. } => {
+                (flags.0 & NORMAL_KEY_FLAG_CLEAR_ON_NEXT_RELEASE)
+                    == NORMAL_KEY_FLAG_CLEAR_ON_NEXT_RELEASE
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -407,7 +403,7 @@ pub struct TapDanceEagerState<'a, T: 'a> {
     num_taps: u16,
 }
 
-impl<'a, T> TapDanceEagerState<'a, T> {
+impl<T> TapDanceEagerState<'_, T> {
     fn tick_tde(&mut self) {
         self.timeout = self.timeout.saturating_sub(1);
     }
@@ -902,13 +898,16 @@ pub struct OneShotState {
     /// When too short, applications or desktop environments process
     /// the key release before the next press,
     /// even if temporally the release was sent after.
-    pub on_press_release_delay: u16,
-    /// If on_press_release_delay is used, this will be >0,
+    pub pause_input_processing_delay: u16,
+    /// If pause_input_processing_delay is used, this will be >0,
     /// meaning input processing should be paused to prevent extra presses
     /// from coming in while OneShot has not yet been released.
     ///
     /// May also be reused for other purposes...
     pub pause_input_processing_ticks: u16,
+
+    /// Number of ticks to ignore press events for.
+    pub ticks_to_ignore_events: u16,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -922,11 +921,13 @@ impl OneShotState {
         if self.keys.is_empty() {
             return None;
         }
+        self.ticks_to_ignore_events = self.ticks_to_ignore_events.saturating_sub(1);
         self.timeout = self.timeout.saturating_sub(1);
         if self.release_on_next_tick || self.timeout == 0 {
             self.release_on_next_tick = false;
             self.timeout = 0;
             self.pause_input_processing_ticks = 0;
+            self.ticks_to_ignore_events = 0;
             self.keys.clear();
             self.other_pressed_keys.clear();
             Some(self.released_keys.drain(..).collect())
@@ -937,7 +938,7 @@ impl OneShotState {
 
     fn handle_press(&mut self, key: OneShotHandlePressKey) -> OneShotCoords {
         let mut oneshot_coords = ArrayDeque::new();
-        if self.keys.is_empty() {
+        if self.keys.is_empty() || self.ticks_to_ignore_events > 0 {
             return oneshot_coords;
         }
         match key {
@@ -958,8 +959,8 @@ impl OneShotState {
                     self.end_config,
                     OneShotEndConfig::EndOnFirstPress | OneShotEndConfig::EndOnFirstPressOrRepress
                 ) {
-                    self.timeout = core::cmp::min(self.on_press_release_delay, self.timeout);
-                    self.pause_input_processing_ticks = self.on_press_release_delay;
+                    self.timeout = core::cmp::min(self.pause_input_processing_delay, self.timeout);
+                    self.pause_input_processing_ticks = self.pause_input_processing_delay;
                 } else {
                     let _ = self.other_pressed_keys.push_back(pressed_coord);
                 }
@@ -1020,6 +1021,20 @@ impl From<Event> for Queued {
     }
 }
 impl Queued {
+    pub(crate) fn new_press(i: u8, j: u16) -> Self {
+        Self {
+            since: 0,
+            event: Event::Press(i, j),
+        }
+    }
+
+    pub(crate) fn new_release(i: u8, j: u16) -> Self {
+        Self {
+            since: 0,
+            event: Event::Release(i, j),
+        }
+    }
+
     pub(crate) fn tick_qd(&mut self) {
         self.since = self.since.saturating_add(1);
     }
@@ -1039,6 +1054,12 @@ pub struct LastPressTracker {
 impl LastPressTracker {
     fn tick_lpt(&mut self) {
         self.tap_hold_timeout = self.tap_hold_timeout.saturating_sub(1);
+    }
+    fn update_coord(&mut self, coord: KCoord) {
+        if coord.0 == REAL_KEY_ROW {
+            // Only update if it's a real key press.
+            self.coord = coord;
+        }
     }
 }
 
@@ -1062,8 +1083,9 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 released_keys: ArrayDeque::new(),
                 other_pressed_keys: ArrayDeque::new(),
                 release_on_next_tick: false,
-                on_press_release_delay: 0,
+                pause_input_processing_delay: 0,
                 pause_input_processing_ticks: 0,
+                ticks_to_ignore_events: 0,
             },
             last_press_tracker: Default::default(),
             active_sequences: ArrayDeque::new(),
@@ -1117,6 +1139,10 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
             if coord == self.last_press_tracker.coord {
                 self.last_press_tracker.tap_hold_timeout = 0;
             }
+            // Similar issue happens for the quick tap-hold tap as with on-press release;
+            // the rapidity of the release can cause issues. See pause_input_processing_delay
+            // comments for more detail.
+            self.oneshot.pause_input_processing_ticks = self.oneshot.pause_input_processing_delay;
             self.do_action(hold, coord, delay, false, &mut layer_stack.into_iter())
         } else {
             CustomEvent::NoEvent
@@ -1195,9 +1221,9 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 }
             }
             // Similar issue happens for the quick tap-hold tap as with on-press release;
-            // the rapidity of the release can cause issues. See on_press_release_delay
+            // the rapidity of the release can cause issues. See pause_input_processing_delay
             // comments for more detail.
-            self.oneshot.pause_input_processing_ticks = self.oneshot.on_press_release_delay;
+            self.oneshot.pause_input_processing_ticks = self.oneshot.pause_input_processing_delay;
             ret
         } else {
             CustomEvent::NoEvent
@@ -1250,11 +1276,10 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
         let active_layer = self.current_layer() as u16;
         if let Some(chv2) = self.chords_v2.as_mut() {
             self.queue.extend(chv2.tick_chv2(active_layer).drain(0..));
-            if let (qac @ Some(_), pause_input_processing) = chv2.get_action_chv2() {
-                self.action_queue.push_back(qac);
-                if pause_input_processing {
-                    self.oneshot.pause_input_processing_ticks = self.oneshot.on_press_release_delay;
-                }
+            if let chord_action @ Some(_) = chv2.get_action_chv2() {
+                self.action_queue.push_back(chord_action);
+                self.oneshot.pause_input_processing_ticks =
+                    self.oneshot.pause_input_processing_delay;
             }
         }
         if let Some(Some((coord, delay, action))) = self.action_queue.pop_front() {
@@ -1341,21 +1366,13 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                     seq.tapped = None;
                 } else {
                     // Pull the next SequenceEvent
-                    match seq.remaining_events {
-                        [e, tail @ ..] => {
-                            seq.cur_event = Some(*e);
-                            seq.remaining_events = tail;
-                        }
-                        [] => (),
+                    if let [e, tail @ ..] = seq.remaining_events {
+                        seq.cur_event = Some(*e);
+                        seq.remaining_events = tail;
                     }
                     // Process it (SequenceEvent)
                     match seq.cur_event {
                         Some(SequenceEvent::Complete) => {
-                            for fake_key in self.states.clone().iter() {
-                                if let FakeKey { keycode } = *fake_key {
-                                    self.states.retain(|s| s.seq_release(keycode).is_some());
-                                }
-                            }
                             seq.remaining_events = &[];
                         }
                         Some(SequenceEvent::Press(keycode)) => {
@@ -1480,8 +1497,9 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 let mut custom = CustomEvent::NoEvent;
                 let (do_release, overflow_key) = self.oneshot.handle_release((i, j));
                 if do_release {
-                    self.states
-                        .retain(|s| s.release((i, j), &mut custom).is_some());
+                    self.states.retain(|s| {
+                        !s.clear_on_next_release() && s.release((i, j), &mut custom).is_some()
+                    });
                 }
                 if let Some((i2, j2)) = overflow_key {
                     self.states
@@ -1507,7 +1525,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                     } else {
                         // i == 0 means real key, i == 1 means fake key. Let fake keys do whatever, but
                         // interrupt tap-dance-eager if real key.
-                        if i == 0 {
+                        if i == REAL_KEY_ROW {
                             // unwrap is here because tde cannot be ref mut
                             self.tap_dance_eager.as_mut().expect("some").set_expired();
                         }
@@ -1580,16 +1598,29 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
         }
         use Action::*;
         self.states.retain(|s| match s {
-            NormalKey { flags, .. } => !flags.clear_on_next_action(),
+            NormalKey { flags, .. } => !flags.nkf_clear_on_next_action(),
             _ => true,
         });
         match action {
             NoOp => {
-                if !is_oneshot {
+                // There is an interaction between oneshot and chordsv2 here.
+                // chordsv2 sends fake queued press/release events at the coordinate level in order
+                // to trigger other "waiting" style actions, namely tap-hold. However, these can
+                // potentially interfere with oneshot by triggering early oneshot activation. This
+                // is resolved by ignoring actions at the coordinate at which the fake events are
+                // sent.
+                if !is_oneshot && coord != TRIGGER_TAPHOLD_COORD {
                     self.oneshot
                         .handle_press(OneShotHandlePressKey::Other(coord));
                 }
                 self.rpt_action = Some(action);
+            }
+            Src => {
+                let action = &self.src_keys[usize::from(coord.1)];
+                // Risk: infinite recursive resulting in stack overflow.
+                // In practice this is not expected to happen.
+                // The `src_keys` actions are all expected to be `KeyCode` or `NoOp` actions.
+                self.do_action(action, coord, delay, is_oneshot, &mut std::iter::empty());
             }
             Trans => {
                 // Transparent action should be resolved to non-transparent one near the top
@@ -1660,11 +1691,11 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                     custom.update(self.do_action(tap, coord, delay, is_oneshot, layer_stack));
                 }
                 // Need to set tap_hold_tracker coord AFTER the checks.
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 return custom;
             }
             &OneShot(oneshot) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 let custom =
                     self.do_action(oneshot.action, coord, delay, true, &mut std::iter::empty());
                 // Note - set rpt_action after doing the inner oneshot action. This means that the
@@ -1679,8 +1710,13 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 }
                 return custom;
             }
+            &OneShotIgnoreEventsTicks(ticks) => {
+                self.last_press_tracker.update_coord(coord);
+                self.rpt_action = Some(action);
+                self.oneshot.ticks_to_ignore_events = ticks;
+            }
             &TapDance(td) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 match td.config {
                     TapDanceConfig::Lazy => {
                         self.waiting = Some(WaitingState {
@@ -1728,7 +1764,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 }
             }
             &Chords(chords) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 self.waiting = Some(WaitingState {
                     coord,
                     timeout: chords.timeout,
@@ -1743,7 +1779,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 });
             }
             &KeyCode(keycode) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 // Most-recent-first!
                 self.historical_keys.push_front(keycode);
                 let _ = self.states.push(NormalKey {
@@ -1776,7 +1812,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 }
             }
             &MultipleKeyCodes(v) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 for &keycode in *v {
                     self.historical_keys.push_front(keycode);
                     let _ = self.states.push(NormalKey {
@@ -1825,7 +1861,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 }
             }
             &MultipleActions(v) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 let mut custom = CustomEvent::NoEvent;
                 for action in *v {
                     custom.update(self.do_action(
@@ -1886,7 +1922,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 self.rpt_action = Some(action);
             }
             &Layer(value) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 let _ = self.states.push(LayerModifier { value, coord });
                 if !is_oneshot {
                     self.oneshot
@@ -1897,7 +1933,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 // be used to repeat the previous non-layer-changing action.
             }
             DefaultLayer(value) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 self.set_default_layer(*value);
                 if !is_oneshot {
                     self.oneshot
@@ -1905,7 +1941,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 }
             }
             Custom(value) => {
-                self.last_press_tracker.coord = coord;
+                self.last_press_tracker.update_coord(coord);
                 if !is_oneshot {
                     self.oneshot
                         .handle_press(OneShotHandlePressKey::Other(coord));
@@ -1954,6 +1990,9 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                     historical_keys,
                     historical_coords,
                     layers,
+                    // Note on truncating cast: I expect default layer to be in range by other
+                    // assertions.
+                    self.default_layer as u16,
                 ) {
                     action_queue.push_back(Some((coord, 0, ac)));
                 }
@@ -2839,7 +2878,7 @@ mod test {
             k(B),
         ]]];
         let mut layout = Layout::new(LAYERS);
-        layout.oneshot.on_press_release_delay = 1;
+        layout.oneshot.pause_input_processing_delay = 1;
 
         // Test:
         // 1. press one-shot
@@ -2951,7 +2990,7 @@ mod test {
             k(B),
         ]]];
         let mut layout = Layout::new(LAYERS);
-        layout.oneshot.on_press_release_delay = 1;
+        layout.oneshot.pause_input_processing_delay = 1;
 
         // Test:
         // 1. press one-shot
@@ -3262,7 +3301,7 @@ mod test {
             [[k(A), k(B), k(C), k(D)]],
         ];
         let mut layout = Layout::new(LAYERS);
-        layout.oneshot.on_press_release_delay = 1;
+        layout.oneshot.pause_input_processing_delay = 1;
 
         layout.event(Press(0, 0));
         layout.event(Release(0, 0));
@@ -3318,7 +3357,7 @@ mod test {
             [[k(A), k(B), k(C)]],
         ];
         let mut layout = Layout::new(LAYERS);
-        layout.oneshot.on_press_release_delay = 1;
+        layout.oneshot.pause_input_processing_delay = 1;
 
         layout.event(Press(0, 0));
         layout.event(Release(0, 0));

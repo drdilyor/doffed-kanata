@@ -66,6 +66,38 @@ impl OsCode {
         #[cfg(target_os = "macos")]
         return OsCode::from_u16_macos(code);
     }
+
+    pub fn is_modifier(self) -> bool {
+        matches!(
+            self,
+            OsCode::KEY_LEFTSHIFT
+                | OsCode::KEY_RIGHTSHIFT
+                | OsCode::KEY_LEFTMETA
+                | OsCode::KEY_RIGHTMETA
+                | OsCode::KEY_LEFTCTRL
+                | OsCode::KEY_RIGHTCTRL
+                | OsCode::KEY_LEFTALT
+                | OsCode::KEY_RIGHTALT
+        )
+    }
+
+    #[cfg(feature = "zippychord")]
+    pub fn is_zippy_ignored(self) -> bool {
+        matches!(
+            self,
+            OsCode::KEY_LEFTSHIFT
+                | OsCode::KEY_RIGHTSHIFT
+                | OsCode::KEY_LEFTMETA
+                | OsCode::KEY_RIGHTMETA
+                | OsCode::KEY_LEFTCTRL
+                | OsCode::KEY_RIGHTCTRL
+                | OsCode::KEY_LEFTALT
+                | OsCode::KEY_RIGHTALT
+                | OsCode::KEY_ESC
+                | OsCode::KEY_BACKSPACE
+                | OsCode::KEY_DELETE
+        )
+    }
 }
 
 static CUSTOM_STRS_TO_OSCODES: Lazy<Mutex<HashMap<String, OsCode>>> = Lazy::new(|| {
@@ -298,13 +330,13 @@ pub fn str_to_oscode(s: &str) -> Option<OsCode> {
         #[cfg(target_os = "windows")]
         "PrintScreen" | "prtsc" | "prnt" => OsCode::KEY_PRINT,
 
+        // NOTE: these are linux and interception-only due to missing implementation for LLHOOK.
+        // Unknown: is macOS supported? I haven't reviewed.
         "mlft" | "mouseleft" | "🖰1" | "‹🖰" => OsCode::BTN_LEFT,
         "mrgt" | "mouseright" | "🖰2" | "🖰›" => OsCode::BTN_RIGHT,
         "mmid" | "mousemid" | "🖰3" => OsCode::BTN_MIDDLE,
         "mbck" | "mousebackward" | "🖰4" => OsCode::BTN_SIDE,
         "mfwd" | "mouseforward" | "🖰5" => OsCode::BTN_EXTRA,
-
-        // NOTE: these are linux and interception-only due to missing implementation for LLHOOK
         "mwu" | "mousewheelup" => OsCode::MouseWheelUp,
         "mwd" | "mousewheeldown" => OsCode::MouseWheelDown,
         "mwl" | "mousewheelleft" => OsCode::MouseWheelLeft,
@@ -1103,6 +1135,25 @@ pub enum OsCode {
     MouseWheelLeft = 747,
     MouseWheelRight = 748,
 
+    KEY_749 = 749,
+    KEY_750 = 750,
+    KEY_751 = 751,
+    KEY_752 = 752,
+    KEY_753 = 753,
+    KEY_754 = 754,
+    KEY_755 = 755,
+    KEY_756 = 756,
+    KEY_757 = 757,
+    KEY_758 = 758,
+    KEY_759 = 759,
+    KEY_760 = 760,
+    KEY_761 = 761,
+    KEY_762 = 762,
+    KEY_763 = 763,
+    KEY_764 = 764,
+    KEY_765 = 765,
+    KEY_766 = 766,
+
     KEY_MAX = 767,
 }
 
@@ -1154,6 +1205,12 @@ impl From<OsCode> for usize {
 impl From<OsCode> for u32 {
     fn from(item: OsCode) -> Self {
         item.as_u16() as u32
+    }
+}
+
+impl From<OsCode> for i32 {
+    fn from(item: OsCode) -> Self {
+        item.as_u16() as i32
     }
 }
 

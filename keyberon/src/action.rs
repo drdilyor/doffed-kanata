@@ -31,7 +31,7 @@ pub enum SequenceEvent<'a, T: 'a> {
     Complete,
 }
 
-impl<'a, T> Debug for SequenceEvent<'a, T> {
+impl<T> Debug for SequenceEvent<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoOp => write!(f, "NoOp"),
@@ -90,7 +90,7 @@ pub enum HoldTapConfig<'a> {
     Custom(&'a (dyn Fn(QueuedIter) -> (Option<WaitingAction>, bool) + Send + Sync)),
 }
 
-impl<'a> Debug for HoldTapConfig<'a> {
+impl Debug for HoldTapConfig<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             HoldTapConfig::Default => f.write_str("Default"),
@@ -101,7 +101,7 @@ impl<'a> Debug for HoldTapConfig<'a> {
     }
 }
 
-impl<'a> PartialEq for HoldTapConfig<'a> {
+impl PartialEq for HoldTapConfig<'_> {
     fn eq(&self, other: &Self) -> bool {
         #[allow(clippy::match_like_matches_macro)]
         match (self, other) {
@@ -358,6 +358,8 @@ where
     /// key will hold space until either another key is pressed or the timeout occurs, which will
     /// probably send many undesired space characters to your active application.
     OneShot(&'a OneShot<'a, T>),
+    /// An action to ignore processing of events for OneShot.
+    OneShotIgnoreEventsTicks(u16),
     /// Tap-dance key. When tapping the key N times in quck succession, activates the N'th action
     /// in `actions`. The action will activate in the following conditions:
     ///
@@ -385,9 +387,12 @@ where
     /// The maximum number of actions that can activate the same time is governed by
     /// `ACTION_QUEUE_LEN`.
     Switch(&'a Switch<'a, T>),
+    /// Disregard the entire layer stack, i.e. the current base layer and any while-held layers,
+    /// and select the action from `Layout.src_keys`.
+    Src,
 }
 
-impl<'a, T> Action<'a, T> {
+impl<T> Action<'_, T> {
     /// Gets the layer number if the action is the `Layer` action.
     pub fn layer(self) -> Option<usize> {
         match self {

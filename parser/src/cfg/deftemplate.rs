@@ -33,35 +33,38 @@ struct Template {
     content: Vec<SExpr>,
 }
 
-/// Parse `deftemplate`s and expand `template-expand`s.
+/// Parse `doftemplate`s and expand `template-expand`s.
 ///
-/// Syntax of `deftemplate` is:
+/// Syntax of `doftemplate` is:
 ///
-/// `(deftemplate (<list of template vars>) <rest of template>)`
+/// `(doftemplate <template name> (<list of template vars>) <rest of template>)`
 ///
 /// Syntax of `template-expand` is:
 ///
 /// `(template-expand <template name> <template var substitutions>)`
-pub fn expand_templates(mut toplevel_exprs: Vec<TopLevel>) -> Result<Vec<TopLevel>> {
+pub fn expand_templates(
+    mut toplevel_exprs: Vec<TopLevel>,
+    lsp_hints: &mut LspHints,
+) -> Result<Vec<TopLevel>> {
     let mut templates: Vec<Template> = vec![];
 
     // Find defined templates
     for list in toplevel_exprs.iter_mut() {
         if !matches!(
             list.t.first().and_then(|expr| expr.atom(None)),
-            Some("deftemplate")
+            Some("doftemplate")
         ) {
             continue;
         }
 
         // Parse template name
-        let name = list
+        let (name, _name_span) = list
             .t
             .get(1)
             .ok_or_else(|| {
                 anyhow_span!(
                     list,
-                    "deftemplate must have the template name as the first parameter"
+                    "doftemplate must have the template name as the first parameter"
                 )
             })
             .and_then(|name_expr| {
@@ -72,9 +75,14 @@ pub fn expand_templates(mut toplevel_exprs: Vec<TopLevel>) -> Result<Vec<TopLeve
                 if templates.iter().any(|t| t.name == name) {
                     bail_expr!(name_expr, "template name was already defined earlier");
                 }
-                Ok(name)
-            })?
-            .to_owned();
+                Ok((name, name_expr.span()))
+            })?;
+
+        #[cfg(feature = "lsp")]
+        lsp_hints
+            .definition_locations
+            .template
+            .insert(name.to_owned(), _name_span);
 
         // Parse template variable names
         let vars = list
@@ -83,21 +91,21 @@ pub fn expand_templates(mut toplevel_exprs: Vec<TopLevel>) -> Result<Vec<TopLeve
             .ok_or_else(|| {
                 anyhow_span!(
                     list,
-                    "deftemplate must have a list of template variables as the second parameter"
+                    "doftemplate must have a list of template variables as the second parameter"
                 )
             })
             .and_then(|v| {
                 v.list(None).ok_or_else(|| {
                     anyhow_expr!(
                         v,
-                        "deftemplate must have a list of template variables the second parameter"
+                        "doftemplate must have a list of template variables the second parameter"
                     )
                 })
             })
             .and_then(|v| {
                 v.iter().try_fold(vec![], |mut vars, var| {
                     let s = var.atom(None).map(|a| a.to_owned()).ok_or_else(|| {
-                        anyhow_expr!(var, "deftemplate variables must be strings")
+                        anyhow_expr!(var, "doftemplate variables must be strings")
                     })?;
                     vars.push(s);
                     Ok(vars)
@@ -112,9 +120,9 @@ pub fn expand_templates(mut toplevel_exprs: Vec<TopLevel>) -> Result<Vec<TopLeve
             .map(|v| (v.clone(), 0))
             .collect();
         visit_validate_all_atoms(&content, &mut |s| match s.t.as_str() {
-            "deftemplate" => err_span!(s, "deftemplate is not allowed within deftemplate"),
+            "doftemplate" => err_span!(s, "doftemplate is not allowed within doftemplate"),
             "template-expand" | "t!" => {
-                err_span!(s, "template-expand is not allowed within deftemplate")
+                err_span!(s, "template-expand is not allowed within doftemplate")
             }
             s => {
                 if let Some(count) = var_usage_counts.get_mut(s) {
@@ -125,12 +133,12 @@ pub fn expand_templates(mut toplevel_exprs: Vec<TopLevel>) -> Result<Vec<TopLeve
         })?;
         for (var, count) in var_usage_counts.iter() {
             if *count == 0 {
-                log::warn!("deftemplate variable {var} did not appear in its template {name}");
+                log::warn!("doftemplate variable {var} did not appear in its template {name}");
             }
         }
 
         templates.push(Template {
-            name,
+            name: name.to_string(),
             vars,
             vars_substitute_names,
             content,
@@ -147,7 +155,7 @@ pub fn expand_templates(mut toplevel_exprs: Vec<TopLevel>) -> Result<Vec<TopLeve
             })
         })
         .collect();
-    expand(&mut toplevels, &templates)?;
+    expand(&mut toplevels, &templates, lsp_hints)?;
 
     toplevels.into_iter().try_fold(vec![], |mut tls, tl| {
         tls.push(match &tl {
@@ -169,7 +177,7 @@ struct Replacement {
     insert_index: usize,
 }
 
-fn expand(exprs: &mut Vec<SExpr>, templates: &[Template]) -> Result<()> {
+fn expand(exprs: &mut Vec<SExpr>, templates: &[Template], _lsp_hints: &mut LspHints) -> Result<()> {
     let mut replacements: Vec<Replacement> = vec![];
     for (expr_index, expr) in exprs.iter_mut().enumerate() {
         match expr {
@@ -179,7 +187,7 @@ fn expand(exprs: &mut Vec<SExpr>, templates: &[Template]) -> Result<()> {
                     l.t.first().and_then(|expr| expr.atom(None)),
                     Some("template-expand") | Some("t!")
                 ) {
-                    expand(&mut l.t, templates)?;
+                    expand(&mut l.t, templates, _lsp_hints)?;
                     continue;
                 }
 
@@ -196,10 +204,15 @@ fn expand(exprs: &mut Vec<SExpr>, templates: &[Template]) -> Result<()> {
                             let name = name_expr.atom(None).ok_or_else(|| {
                                 anyhow_expr!(name_expr, "template name must be a string")
                             })?;
+                            #[cfg(feature = "lsp")]
+                            _lsp_hints
+                                .reference_locations
+                                .template
+                                .push(name, name_expr.span());
                             templates.iter().find(|t| t.name == name).ok_or_else(|| {
                                 anyhow_expr!(
                                     name_expr,
-                                    "template name was not defined in any deftemplate"
+                                    "template name was not defined in any doftemplate"
                                 )
                             })
                         })?;

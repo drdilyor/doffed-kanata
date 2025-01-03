@@ -26,6 +26,12 @@ pub const MACRO_RELEASE_CANCEL: &str = "macro-release-cancel";
 pub const MACRO_RELEASE_CANCEL_A: &str = "macro↑⤫";
 pub const MACRO_REPEAT_RELEASE_CANCEL: &str = "macro-repeat-release-cancel";
 pub const MACRO_REPEAT_RELEASE_CANCEL_A: &str = "macro⟳↑⤫";
+pub const MACRO_CANCEL_ON_NEXT_PRESS: &str = "macro-cancel-on-press";
+pub const MACRO_REPEAT_CANCEL_ON_NEXT_PRESS: &str = "macro-repeat-cancel-on-press";
+pub const MACRO_CANCEL_ON_NEXT_PRESS_CANCEL_ON_RELEASE: &str =
+    "macro-release-cancel-and-cancel-on-press";
+pub const MACRO_REPEAT_CANCEL_ON_NEXT_PRESS_CANCEL_ON_RELEASE: &str =
+    "macro-repeat-release-cancel-and-cancel-on-press";
 pub const UNICODE: &str = "unicode";
 pub const SYM: &str = "🔣";
 pub const ONE_SHOT: &str = "one-shot";
@@ -37,6 +43,7 @@ pub const ONE_SHOT_PRESS_PCANCEL: &str = "one-shot-press-pcancel";
 pub const ONE_SHOT_PRESS_PCANCEL_A: &str = "one-shot↓⤫";
 pub const ONE_SHOT_RELEASE_PCANCEL: &str = "one-shot-release-pcancel";
 pub const ONE_SHOT_RELEASE_PCANCEL_A: &str = "one-shot↑⤫";
+pub const ONE_SHOT_PAUSE_PROCESSING: &str = "one-shot-pause-processing";
 pub const TAP_DANCE: &str = "tap-dance";
 pub const TAP_DANCE_EAGER: &str = "tap-dance-eager";
 pub const CHORD: &str = "chord";
@@ -85,6 +92,7 @@ pub const DYNAMIC_MACRO_RECORD: &str = "dynamic-macro-record";
 pub const DYNAMIC_MACRO_PLAY: &str = "dynamic-macro-play";
 pub const ARBITRARY_CODE: &str = "arbitrary-code";
 pub const CMD: &str = "cmd";
+pub const CMD_LOG: &str = "cmd-log";
 pub const PUSH_MESSAGE: &str = "push-msg";
 pub const CMD_OUTPUT_KEYS: &str = "cmd-output-keys";
 pub const FORK: &str = "fork";
@@ -109,6 +117,7 @@ pub const ON_PRESS_A: &str = "on↓";
 pub const ON_RELEASE: &str = "on-release";
 pub const ON_RELEASE_A: &str = "on↑";
 pub const ON_IDLE: &str = "on-idle";
+pub const HOLD_FOR_DURATION: &str = "hold-for-duration";
 
 pub fn is_list_action(ac: &str) -> bool {
     const LIST_ACTIONS: &[&str] = &[
@@ -196,6 +205,7 @@ pub fn is_list_action(ac: &str) -> bool {
         ARBITRARY_CODE,
         CMD,
         CMD_OUTPUT_KEYS,
+        CMD_LOG,
         PUSH_MESSAGE,
         FORK,
         CAPS_WORD,
@@ -219,6 +229,12 @@ pub fn is_list_action(ac: &str) -> bool {
         ON_RELEASE,
         ON_RELEASE_A,
         ON_IDLE,
+        HOLD_FOR_DURATION,
+        MACRO_CANCEL_ON_NEXT_PRESS,
+        MACRO_REPEAT_CANCEL_ON_NEXT_PRESS,
+        MACRO_CANCEL_ON_NEXT_PRESS_CANCEL_ON_RELEASE,
+        MACRO_REPEAT_CANCEL_ON_NEXT_PRESS_CANCEL_ON_RELEASE,
+        ONE_SHOT_PAUSE_PROCESSING,
     ];
     LIST_ACTIONS.contains(&ac)
 }

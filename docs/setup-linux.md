@@ -64,7 +64,15 @@ Documentation=https://github.com/jtroo/kanata
 
 [Service]
 Environment=PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/bin
-Environment=DISPLAY=:0
+#   Uncomment the 4 lines beneath this to increase process priority
+#   of Kanata in case you encounter lagginess when resource constrained.
+#   WARNING: doing so will require the service to run as an elevated user such as root.
+#   Implementing least privilege access is an exercise left to the reader.
+#
+# CPUSchedulingPolicy=rr
+# CPUSchedulingPriority=99
+# IOSchedulingClass=realtime
+# Nice=-20
 Type=simple
 ExecStart=/usr/bin/sh -c 'exec $$(which kanata) --cfg $${HOME}/.config/kanata/config.kbd'
 Restart=no
@@ -79,6 +87,10 @@ You can check the executable path with:
 ```bash
 which sh
 ```
+
+Also, verify if the path to kanata is included in the line `Environment=PATH=[...]`.
+For example, if executing `which kanata` returns `/home/[user]/.cargo/bin/kanata`, the `PATH` line should be appended with `/home/[user]/.cargo/bin` or `:%h/.cargo/bin`.
+`%h` is one of the specifiers allowed in systemd, more can be found in https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Specifiers
 
 Then run:
 ```bash

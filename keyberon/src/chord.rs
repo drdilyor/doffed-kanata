@@ -22,6 +22,8 @@ macro_rules! no_chord_activations {
     }};
 }
 
+pub(crate) const TRIGGER_TAPHOLD_COORD: (u8, u16) = (0, 0);
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ReleaseBehaviour {
     OnFirstRelease,
@@ -139,7 +141,7 @@ pub struct ChordsV2<'a, T> {
     next_coord: Cell<u16>,
 }
 
-impl<'a, T> std::fmt::Debug for ChordsV2<'a, T> {
+impl<T> std::fmt::Debug for ChordsV2<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ChordsV2")
     }
@@ -177,24 +179,21 @@ impl<'a, T> ChordsV2<'a, T> {
         &self.chords
     }
 
-    pub(crate) fn get_action_chv2(&mut self) -> (QueuedAction<'a, T>, bool) {
-        match self
-            .active_chords
+    pub(crate) fn get_action_chv2(&mut self) -> QueuedAction<'a, T> {
+        self.active_chords
             .iter_mut()
             .find_map(|ach| match ach.status {
                 Unread => {
                     ach.status = Releasable;
-                    Some((Some(((0, ach.coordinate), ach.delay, ach.action)), false))
+                    Some(Some(((0, ach.coordinate), ach.delay, ach.action)))
                 }
                 UnreadReleased => {
                     ach.status = Released;
-                    Some((Some(((0, ach.coordinate), ach.delay, ach.action)), true))
+                    Some(Some(((0, ach.coordinate), ach.delay, ach.action)))
                 }
                 Releasable | Released => None,
-            }) {
-            Some(v) => v,
-            None => (None, false),
-        }
+            })
+            .unwrap_or_default()
     }
 
     /// Update the times in the queue without activating any chords yet.
@@ -202,8 +201,32 @@ impl<'a, T> ChordsV2<'a, T> {
     pub(crate) fn tick_chv2(&mut self, active_layer: u16) -> SmolQueue {
         let mut q = SmolQueue::new();
         self.queue.iter_mut().for_each(Queued::tick_qd);
+        let prev_active_chord_len = self.active_chords.len();
         self.active_chords.iter_mut().for_each(tick_ach);
         self.drain_inputs(&mut q, active_layer);
+        if self.active_chords.len() != prev_active_chord_len {
+            // A chord was activated. Forward a no-op press event to potentially trigger
+            // HoldOnOtherKeyPress or PermissiveHold.
+            // FLAW: this does not associate with the actual input keys and thus cannot correctly
+            // trigger the early tap for *-keys variants of kanata tap-hold.
+            q.push_back(Queued::new_press(
+                TRIGGER_TAPHOLD_COORD.0,
+                TRIGGER_TAPHOLD_COORD.1,
+            ));
+        }
+        if self
+            .active_chords
+            .iter()
+            .any(|ach| matches!(ach.status, UnreadReleased | Released))
+        {
+            // A chord was released. Forward a no-op release event to potentially trigger
+            // PermissiveHold.
+            // FLAW: see above
+            q.push_back(Queued::new_release(
+                TRIGGER_TAPHOLD_COORD.0,
+                TRIGGER_TAPHOLD_COORD.1,
+            ));
+        }
         self.clear_released_chords(&mut q);
         self.ticks_to_ignore_chord = self.ticks_to_ignore_chord.saturating_sub(1);
         q
@@ -267,9 +290,7 @@ impl<'a, T> ChordsV2<'a, T> {
                 true
             }
             Event::Release(_, j) => {
-                if presses.contains(&j) {
-                    return true;
-                }
+                // Release the key from active chords.
                 achs.iter_mut().for_each(|ach| {
                     if !ach.participating_keys.contains(&j) {
                         return;
@@ -282,8 +303,12 @@ impl<'a, T> ChordsV2<'a, T> {
                         }
                     }
                 });
-                drainq.push_back(*qd);
-                false
+                if presses.is_empty() {
+                    drainq.push_back(*qd);
+                    false
+                } else {
+                    true
+                }
             }
         })
     }

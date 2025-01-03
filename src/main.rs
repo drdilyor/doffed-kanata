@@ -25,19 +25,19 @@ struct Args {
         target_os = "windows",
         doc = r"Configuration file(s) to use with kanata. If not specified, defaults to
 kanata.kbd in the current working directory and
-'C:\Users\user\AppData\Roaming\kanata\kanata.kbd'"
+'C:\Users\user\AppData\Roaming\kanata\kanata.kbd'."
     )]
     #[cfg_attr(
         target_os = "macos",
         doc = "Configuration file(s) to use with kanata. If not specified, defaults to
 kanata.kbd in the current working directory and
-'$HOME/Library/Application Support/kanata/kanata.kbd.'"
+'$HOME/Library/Application Support/kanata/kanata.kbd'."
     )]
     #[cfg_attr(
         not(any(target_os = "macos", target_os = "windows")),
         doc = "Configuration file(s) to use with kanata. If not specified, defaults to
 kanata.kbd in the current working directory and
-'$XDG_CONFIG_HOME/kanata/kanata.kbd'"
+'$XDG_CONFIG_HOME/kanata/kanata.kbd'."
     )]
     #[arg(short, long, verbatim_doc_comment)]
     cfg: Option<Vec<PathBuf>>,
@@ -62,6 +62,10 @@ kanata.kbd in the current working directory and
     #[cfg(target_os = "macos")]
     #[arg(short, long)]
     list: bool,
+
+    /// Disable logging, except for errors. Takes precedent over debug and trace.
+    #[arg(short, long)]
+    quiet: bool,
 
     /// Enable debug logging.
     #[arg(short, long)]
@@ -112,10 +116,11 @@ mod cli {
 
         let cfg_paths = args.cfg.unwrap_or_else(default_cfg);
 
-        let log_lvl = match (args.debug, args.trace) {
-            (_, true) => LevelFilter::Trace,
-            (true, false) => LevelFilter::Debug,
-            (false, false) => LevelFilter::Info,
+        let log_lvl = match (args.debug, args.trace, args.quiet) {
+            (_, true, false) => LevelFilter::Trace,
+            (true, false, false) => LevelFilter::Debug,
+            (false, false, false) => LevelFilter::Info,
+            (_, _, true) => LevelFilter::Error,
         };
 
         let mut log_cfg = ConfigBuilder::new();
@@ -229,18 +234,13 @@ mod cli {
         #[cfg(target_os = "linux")]
         sd_notify::notify(true, &[sd_notify::NotifyState::Ready])?;
 
-        #[cfg(any(not(target_os = "windows"), not(feature = "gui")))]
-        Kanata::event_loop(kanata_arc, tx)?;
-
-        Ok(())
+        Kanata::event_loop(kanata_arc, tx)
     }
 }
 
 #[cfg(not(feature = "gui"))]
-use cli::*;
-#[cfg(not(feature = "gui"))]
 pub fn main() -> Result<()> {
-    let ret = main_impl();
+    let ret = cli::main_impl();
     if let Err(ref e) = ret {
         log::error!("{e}\n");
     }
@@ -249,8 +249,7 @@ pub fn main() -> Result<()> {
     ret
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "gui", target_os = "windows"))]
 fn main() {
-    use main_lib::win_gui::*;
-    lib_main_gui();
+    main_lib::win_gui::lib_main_gui();
 }

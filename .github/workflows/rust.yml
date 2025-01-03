@@ -70,6 +70,9 @@ jobs:
     - name: Run clippy simulated output
       run: cargo clippy --all --features=simulated_output,cmd -- -D warnings
 
+    - name: Run clippy for parser with lsp feature
+      run: cargo clippy -p kanata-parser --features=lsp -- -D warnings
+
   build-test-clippy-windows:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -116,6 +119,9 @@ jobs:
       run: cargo test --all --features=gui
     - name: Run clippy gui
       run: cargo clippy --all --features=gui -- -D warnings
+
+    - name: Check gui+cmd+interception
+      run: cargo check --features gui,cmd,interception_driver
 
   build-test-clippy-macos:
     runs-on: ${{ matrix.os }}

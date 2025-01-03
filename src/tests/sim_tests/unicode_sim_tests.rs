@@ -1,17 +1,18 @@
 use super::*;
 
 #[test]
-fn special_nop_keys() {
+fn unicode() {
     let result = simulate(
         r##"
          (dofcfg)
-         (dofsrc 6 7 8 9 0)
+         (dofsrc 6 7 8 9 0 f1)
          (doflayer base
              (unicode r#"("#)
              (unicode r#")"#)
              (unicode r#"""#)
              (unicode "(")
              (unicode ")")
+             (tap-dance 200 (f1(unicode 😀)f2(unicode 🙂)))
          )
         "##,
         "d:6 d:7 d:8 d:9 d:0 t:100",

@@ -6,9 +6,34 @@ use kanata_keyberon::action::BooleanOperator::*;
 use std::sync::{Mutex, MutexGuard};
 
 mod ambiguous;
+mod dofcfg;
+mod device_detect;
 mod environment;
+mod macros;
 
 static CFG_PARSE_LOCK: Mutex<()> = Mutex::new(());
+
+fn init_log() {
+    use simplelog::*;
+    use std::sync::OnceLock;
+    static LOG_INIT: OnceLock<()> = OnceLock::new();
+    LOG_INIT.get_or_init(|| {
+        let mut log_cfg = ConfigBuilder::new();
+        if let Err(e) = log_cfg.set_time_offset_to_local() {
+            eprintln!("WARNING: could not set log TZ to local: {e:?}");
+        };
+        log_cfg.set_time_format_rfc3339();
+        CombinedLogger::init(vec![TermLogger::new(
+            // Note: set to a different level to see logs in tests.
+            // Also, not all tests call init_log so you might have to add the call there too.
+            LevelFilter::Error,
+            log_cfg.build(),
+            TerminalMode::Stderr,
+            ColorChoice::AlwaysAnsi,
+        )])
+        .expect("logger can init");
+    });
+}
 
 fn lock<T>(lk: &Mutex<T>) -> MutexGuard<T> {
     match lk.lock() {
@@ -18,9 +43,10 @@ fn lock<T>(lk: &Mutex<T>) -> MutexGuard<T> {
 }
 
 fn parse_cfg(cfg: &str) -> Result<IntermediateCfg> {
+    init_log();
     let _lk = lock(&CFG_PARSE_LOCK);
     let mut s = ParserState::default();
-    parse_cfg_raw_string(
+    let icfg = parse_cfg_raw_string(
         cfg,
         &mut s,
         &PathBuf::from("test"),
@@ -29,7 +55,19 @@ fn parse_cfg(cfg: &str) -> Result<IntermediateCfg> {
         },
         DEF_LOCAL_KEYS,
         Err("env vars not implemented".into()),
-    )
+    );
+    if let Ok(ref icfg) = icfg {
+        assert!(icfg
+            .klayers
+            .layers
+            .iter()
+            .all(|layer| layer[usize::from(NORMAL_KEY_ROW)]
+                .iter()
+                .all(|action| *action != DEFAULT_ACTION)));
+        #[cfg(any(target_os = "linux", target_os = "unknown"))]
+        assert!(icfg.options.linux_opts.linux_device_detect_mode.is_some());
+    }
+    icfg
 }
 
 #[test]
@@ -274,6 +312,13 @@ fn parse_multiline_comment() {
 fn parse_file_with_utf8_bom() {
     let _lk = lock(&CFG_PARSE_LOCK);
     new_from_file(&std::path::PathBuf::from("./test_cfgs/utf8bom.kbd")).unwrap();
+}
+
+#[test]
+#[cfg(feature = "zippychord")]
+fn parse_zippychord_file() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    new_from_file(&std::path::PathBuf::from("./test_cfgs/testzch.kbd")).unwrap();
 }
 
 #[test]
@@ -563,6 +608,15 @@ fn test_include_bad2_has_original_filename() {
         "test_cfgs{}include-bad2.kbd",
         std::path::MAIN_SEPARATOR
     )));
+}
+
+#[test]
+fn test_include_ignore_optional_filename() {
+    let _lk = lock(&CFG_PARSE_LOCK);
+    new_from_file(&std::path::PathBuf::from(
+        "./test_cfgs/include-good-optional-absent.kbd",
+    ))
+    .unwrap();
 }
 
 #[test]
@@ -1321,6 +1375,7 @@ fn parse_all_defcfg() {
   delegate-to-first-layer yes
   movemouse-inherit-accel-state yes
   movemouse-smooth-diagonals yes
+  override-release-on-activation yes
   dynamic-macro-max-presses 1000
   concurrent-tap-hold yes
   rapid-event-delay 5
@@ -1331,6 +1386,8 @@ fn parse_all_defcfg() {
   linux-unicode-u-code v
   linux-unicode-termination space
   linux-x11-repeat-delay-rate 400,50
+  linux-use-trackpoint-property yes
+  linux-output-device-bus-type USB
   tray-icon symbols.ico
   icon-match-layer-name no
   tooltip-layer-changes yes
@@ -1352,6 +1409,35 @@ fn parse_all_defcfg() {
     parse_cfg(source)
         .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
         .expect("parses");
+}
+
+#[test]
+fn parse_defcfg_linux_output_bus() {
+    let source = r#"
+(dofcfg linux-output-device-bus-type USB)
+(dofsrc a)
+(doflayer base a)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+    let source = r#"
+(dofcfg linux-output-device-bus-type I8042)
+(dofsrc a)
+(doflayer base a)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+    let source = r#"
+(dofcfg linux-output-device-bus-type INVALID)
+(dofsrc a)
+(doflayer base a)
+"#;
+    let err = parse_cfg(source).expect_err("should err");
+    assert!(err
+        .msg
+        .contains("Invalid value for linux-output-device-bus-type"));
 }
 
 #[test]
@@ -1443,6 +1529,30 @@ fn parse_cmd() {
 }
 
 #[test]
+#[cfg(feature = "cmd")]
+fn parse_cmd_log() {
+    let source = r#"
+(dofcfg danger-enable-cmd yes)
+(dofsrc a)
+(doflayer base a)
+(dofvar
+    x blah
+    y (nyoom)
+    z (squish squash (splish splosh))
+)
+(dofalias
+    1 (cmd-log debug debug hello world)
+    2 (cmd-log error warn (hello world))
+    3 (cmd-log info debug $x $y ($z))
+    4 (cmd-log none none hello world)
+)
+"#;
+    parse_cfg(source)
+        .map_err(|e| eprintln!("{:?}", miette::Error::from(e)))
+        .expect("parses");
+}
+
+#[test]
 fn parse_defvar_concat() {
     let _lk = lock(&CFG_PARSE_LOCK);
     let source = r#"
@@ -1516,7 +1626,7 @@ fn parse_defvar_concat() {
 #[test]
 fn parse_template_1() {
     let source = r#"
-(deftemplate home-row (j-behaviour)
+(doftemplate home-row (j-behaviour)
   a s d f g h $j-behaviour k l ; '
 )
 
@@ -1550,7 +1660,7 @@ fn parse_template_2() {
 ;; This template defines a chord group and aliases that use the chord group.
 ;; The purpose is to easily define the same chord position behaviour
 ;; for multiple layers that have different underlying keys.
-(deftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
+(doftemplate left-hand-chords (chordgroupname k1 k2 k3 k4 alias1 alias2 alias3 alias4)
   (dofalias
     $alias1 (chord $chordgroupname $k1)
     $alias2 (chord $chordgroupname $k2)
@@ -1582,7 +1692,7 @@ fn parse_template_2() {
 #[test]
 fn parse_template_3() {
     let source = r#"
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-equal $version v1 j)
   (if-equal $version v2 (tap-hold 200 200 j (if-equal $version v2 k)))
@@ -1613,7 +1723,7 @@ fn parse_template_3() {
 #[test]
 fn parse_template_4() {
     let source = r#"
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-not-equal $version v2 j)
   (if-not-equal $version v1 (tap-hold 200 200 j (if-not-equal $version v1 k)))
@@ -1636,7 +1746,7 @@ fn parse_template_4() {
 #[test]
 fn parse_template_5() {
     let source = r#"
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-in-list $version (v0 v3 v1 v4) j)
   (if-in-list $version (v0 v2 v3 v4) (tap-hold 200 200 j (if-in-list $version (v0 v3 v4 v2) k)))
@@ -1659,7 +1769,7 @@ fn parse_template_5() {
 #[test]
 fn parse_template_6() {
     let source = r#"
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-not-in-list $version (v2 v3 v4) j)
   (if-not-in-list $version (v1 v3 v4) (tap-hold 200 200 j (if-not-in-list $version (v1 v3 v4) k)))
@@ -1682,7 +1792,7 @@ fn parse_template_6() {
 #[test]
 fn parse_template_7() {
     let source = r#"
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-in-list $version (v0 v3 (concat v (((1)))) v4) (concat j))
   (if-in-list $version ((concat v 0) (concat v (2)) v3 v4) (tap-hold 200 200 (concat j) (if-in-list $version (v0 v3 v4 v2) (concat "k"))))
@@ -1707,13 +1817,13 @@ fn parse_template_8() {
     let _lk = lock(&CFG_PARSE_LOCK);
 
     let source = r#"
-(deftemplate home-row (version)
+(doftemplate home-row (version)
   a s d f g h
   (if-in-list $version (v0 v3 (concat v (((1)))) v4) (concat j))
   (if-in-list $version ((concat v 0) (concat v (2)) v3 v4) (tap-hold 200 200 (concat j) (if-in-list $version (v0 v3 v4 v2) (concat "k"))))
    k l ; '
 )
-(deftemplate var () (dofvar num 200))
+(doftemplate var () (dofvar num 200))
 (dofsrc
   (t! home-row v1)
 )
@@ -1953,4 +2063,17 @@ fn disallow_whitespace_in_tooltip_size() {
 (doflayer test 1)
 ";
     parse_cfg(source).map(|_| ()).expect_err("fails");
+}
+
+#[test]
+fn reverse_release_order_must_be_within_multi() {
+    let source = "
+(dofsrc a)
+(doflayer base reverse-release-order)
+";
+    let e = parse_cfg(source).map(|_| ()).expect_err("fails");
+    assert_eq!(
+        e.msg,
+        "reverse-release-order is only allowed inside of a (multi ...) action list"
+    );
 }

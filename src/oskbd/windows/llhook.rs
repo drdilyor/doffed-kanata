@@ -24,7 +24,7 @@ use kanata_keyberon::key_code::KeyCode;
 use kanata_parser::custom_action::*;
 use kanata_parser::keys::*;
 
-pub const LLHOOK_IDLE_TIME_CLEAR_INPUTS: u64 = 60;
+pub const LLHOOK_IDLE_TIME_SECS_CLEAR_INPUTS: u64 = 60;
 
 type HookFn = dyn FnMut(InputEvent) -> bool;
 
@@ -422,14 +422,16 @@ fn mouse_event(flags: u32, data: u32, dx: i32, dy: i32) {
     let mut input = INPUT {
         type_: INPUT_MOUSE,
         u: unsafe {
-            mem::transmute(MOUSEINPUT {
-                dx,
-                dy,
-                mouseData: data,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            })
+            mem::transmute::<winapi::um::winuser::MOUSEINPUT, winapi::um::winuser::INPUT_u>(
+                MOUSEINPUT {
+                    dx,
+                    dy,
+                    mouseData: data,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            )
         },
     };
     unsafe { SendInput(1, &mut input as LPINPUT, mem::size_of::<INPUT>() as c_int) };

@@ -12,7 +12,7 @@ build_release_linux output_dir:
 
 # Build the release binaries for Windows and put the binaries+cfg in the output directory.
 build_release_windows output_dir:
-  cargo build --release --features win_manifest; cp target/release/kanata.exe "{{output_dir}}\kanata_legacy_output.exe"
+  cargo build --release --no-default-features --features tcp_server,win_manifest; cp target/release/kanata.exe "{{output_dir}}\kanata_legacy_output.exe"
   cargo build --release --features win_manifest,interception_driver; cp target/release/kanata.exe "{{output_dir}}\kanata_wintercept.exe"
   cargo build --release --features win_manifest,win_sendinput_send_scancodes; cp target/release/kanata.exe "{{output_dir}}\kanata.exe"
   cargo build --release --features win_manifest,win_sendinput_send_scancodes,win_llhook_read_scancodes; cp target/release/kanata.exe "{{output_dir}}\kanata_winIOv2.exe"
@@ -21,7 +21,7 @@ build_release_windows output_dir:
   cargo build --release --features passthru_ahk --package=simulated_passthru; cp target/release/kanata_passthru.dll "{{output_dir}}\kanata_passthru.dll"
   cargo build --release --features win_manifest,gui    ; cp target/release/kanata.exe "{{output_dir}}\kanata_gui.exe"
   cargo build --release --features win_manifest,gui,cmd; cp target/release/kanata.exe "{{output_dir}}\kanata_gui_cmd_allowed.exe"
-  cargo build --release --features win_manifest,gui    ,interception_driver; cp target/release/kanata.exe "{{output_dir}}\kanata_gui_wintercept.exe"
+  cargo build --release --features win_manifest,gui,interception_driver    ; cp target/release/kanata.exe "{{output_dir}}\kanata_gui_wintercept.exe"
   cargo build --release --features win_manifest,gui,cmd,interception_driver; cp target/release/kanata.exe "{{output_dir}}\kanata_gui_wintercept_cmd_allowed.exe"
   cp cfg_samples/kanata.kbd "{{output_dir}}"
 
@@ -70,3 +70,17 @@ cov:
   cargo llvm-cov --no-report --workspace --features=cmd,interception_driver,win_sendinput_send_scancodes
   cargo llvm-cov --no-report --features=simulated_output -- sim_tests
   cargo llvm-cov report --html
+
+publish:
+  cd keyberon && cargo publish
+  cd tcp_protocol && cargo publish
+  cd parser && cargo publish
+
+# Include the trailing `\` or `/` in the output_dir parameter. The parameter should be an absolute path.
+cfg_to_html output_dir:
+  cd docs ; asciidoctor config.adoc
+  cd docs ; cp config.html "{{output_dir}}config.html"; rm config.html
+
+# Include the trailing `\` or `/` in the output_dir parameter. The parameter should be an absolute path.
+wasm_pack output_dir:
+  cd wasm; wasm-pack build --target web; cd pkg; cp kanata_wasm_bg.wasm "{{output_dir}}"; cp kanata_wasm.js "{{output_dir}}"

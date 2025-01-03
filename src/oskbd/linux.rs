@@ -2,7 +2,8 @@
 
 #![cfg_attr(feature = "simulated_output", allow(dead_code, unused_imports))]
 
-use evdev::{uinput, Device, EventType, InputEvent, PropType, RelativeAxisType};
+pub use evdev::BusType;
+use evdev::{uinput, Device, EventType, InputEvent, Key, PropType, RelativeAxisType};
 use inotify::{Inotify, WatchMask};
 use mio::{unix::SourceFd, Events, Interest, Poll, Token};
 use nix::ioctl_read_buf;
@@ -22,8 +23,10 @@ use std::thread;
 
 use super::*;
 use crate::{kanata::CalculatedMouseMove, oskbd::KeyEvent};
+use kanata_parser::cfg::DeviceDetectMode;
+use kanata_parser::cfg::UnicodeTermination;
+use kanata_parser::custom_action::*;
 use kanata_parser::keys::*;
-use kanata_parser::{cfg::UnicodeTermination, custom_action::*};
 
 pub struct KbdIn {
     devices: HashMap<Token, (Device, String)>,
@@ -36,6 +39,7 @@ pub struct KbdIn {
     _inotify: Inotify,
     include_names: Option<Vec<String>>,
     exclude_names: Option<Vec<String>>,
+    device_detect_mode: DeviceDetectMode,
 }
 
 const INOTIFY_TOKEN_VALUE: usize = 0;
@@ -49,6 +53,7 @@ impl KbdIn {
         continue_if_no_devices: bool,
         include_names: Option<Vec<String>>,
         exclude_names: Option<Vec<String>>,
+        device_detect_mode: DeviceDetectMode,
     ) -> Result<Self, io::Error> {
         let poll = Poll::new()?;
 
@@ -60,7 +65,11 @@ impl KbdIn {
                 missing_device_paths.as_mut().expect("initialized"),
             )
         } else {
-            discover_devices(include_names.as_deref(), exclude_names.as_deref())
+            discover_devices(
+                include_names.as_deref(),
+                exclude_names.as_deref(),
+                device_detect_mode,
+            )
         };
         if devices.is_empty() {
             if continue_if_no_devices {
@@ -91,6 +100,7 @@ impl KbdIn {
             token_counter: INOTIFY_TOKEN_VALUE + 1,
             include_names,
             exclude_names,
+            device_detect_mode,
         };
 
         for (device, dev_path) in devices.into_iter() {
@@ -142,7 +152,7 @@ impl KbdIn {
                         .map(|evs| evs.into_iter().for_each(|ev| input_events.push(ev)))
                     {
                         // Currently the kind() is uncategorized... not helpful, need to match
-                        // on os error (19)
+                        // on os error. code 19 is ENODEV, "no such device".
                         match e.raw_os_error() {
                             Some(19) => {
                                 self.poll
@@ -214,56 +224,93 @@ impl KbdIn {
             std::thread::sleep(std::time::Duration::from_millis(
                 WAIT_DEVICE_MS.load(Ordering::SeqCst),
             ));
-            discover_devices(self.include_names.as_deref(), self.exclude_names.as_deref())
-                .into_iter()
-                .try_for_each(|(dev, path)| {
-                    if !self
-                        .devices
-                        .values()
-                        .any(|(_, registered_path)| &path == registered_path)
-                    {
-                        self.register_device(dev, path)
-                    } else {
-                        Ok(())
-                    }
-                })?;
+            discover_devices(
+                self.include_names.as_deref(),
+                self.exclude_names.as_deref(),
+                self.device_detect_mode,
+            )
+            .into_iter()
+            .try_for_each(|(dev, path)| {
+                if !self
+                    .devices
+                    .values()
+                    .any(|(_, registered_path)| &path == registered_path)
+                {
+                    self.register_device(dev, path)
+                } else {
+                    Ok(())
+                }
+            })?;
         }
         Ok(())
     }
 }
 
-pub fn is_input_device(device: &Device) -> bool {
-    use evdev::Key;
-    let is_keyboard = device
-        .supported_keys()
-        .map_or(false, |keys| keys.contains(Key::KEY_ENTER));
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum DeviceType {
+    Keyboard,
+    KeyboardMouse,
+    Mouse,
+    Other,
+}
+
+pub fn is_input_device(device: &Device, detect_mode: DeviceDetectMode) -> bool {
+    if device.name() == Some("kanata") {
+        return false;
+    }
+    let is_keyboard = device.supported_keys().map_or(false, has_keyboard_keys);
     let is_mouse = device
         .supported_relative_axes()
         .map_or(false, |axes| axes.contains(RelativeAxisType::REL_X));
-    if is_keyboard || is_mouse {
-        if device.name() == Some("kanata") {
-            return false;
+    let device_type = match (is_keyboard, is_mouse) {
+        (true, true) => DeviceType::KeyboardMouse,
+        (true, false) => DeviceType::Keyboard,
+        (false, true) => DeviceType::Mouse,
+        (false, false) => DeviceType::Other,
+    };
+    let device_name = device.name().unwrap_or("unknown device name");
+    match (detect_mode, device_type) {
+        (DeviceDetectMode::Any, _)
+        | (DeviceDetectMode::KeyboardMice, DeviceType::Keyboard | DeviceType::KeyboardMouse)
+        | (DeviceDetectMode::KeyboardOnly, DeviceType::Keyboard) => {
+            let use_input = true;
+            log::debug!(
+                "Use for input autodetect: {use_input}. detect type {:?}; device type {:?}, device name: {}",
+                detect_mode,
+                device_type,
+                device_name,
+            );
+            use_input
         }
-        log::debug!(
-            "Detected {}: name={} physical_path={:?}",
-            if is_keyboard && is_mouse {
-                "Keyboard/Mouse"
-            } else if is_keyboard {
-                "Keyboard"
-            } else {
-                "Mouse"
-            },
-            device.name().unwrap_or("unknown device name"),
-            device.physical_path()
-        );
-        true
-    } else {
-        log::trace!(
-            "Detected other device: {}",
-            device.name().unwrap_or("unknown device name")
-        );
-        false
+        (_, DeviceType::Other) => {
+            log::debug!(
+                "Use for input autodetect: false. Non-input device: {}",
+                device_name,
+            );
+            false
+        }
+        _ => {
+            let use_input = false;
+            log::debug!(
+                "Use for input autodetect: {use_input}. detect type {:?}; device type {:?}, device name: {}",
+                detect_mode,
+                device_type,
+                device_name,
+            );
+            use_input
+        }
     }
+}
+
+fn has_keyboard_keys(keys: &evdev::AttributeSetRef<Key>) -> bool {
+    const SENSIBLE_KEYBOARD_SCANCODE_LOWER_BOUND: u16 = 1;
+    // The next one is power button. Some keyboards have it,
+    // but so does the power button...
+    const SENSIBLE_KEYBOARD_SCANCODE_UPPER_BOUND: u16 = 115;
+    let mut sensible_keyboard_keys = (SENSIBLE_KEYBOARD_SCANCODE_LOWER_BOUND
+        ..=SENSIBLE_KEYBOARD_SCANCODE_UPPER_BOUND)
+        .map(Key::new);
+    sensible_keyboard_keys.any(|k| keys.contains(k))
 }
 
 impl TryFrom<InputEvent> for KeyEvent {
@@ -324,7 +371,11 @@ pub struct KbdOut {
 
 #[cfg(all(not(feature = "simulated_output"), not(feature = "passthru_ahk")))]
 impl KbdOut {
-    pub fn new(symlink_path: &Option<String>, trackpoint: bool) -> Result<Self, io::Error> {
+    pub fn new(
+        symlink_path: &Option<String>,
+        trackpoint: bool,
+        bus_type: BusType,
+    ) -> Result<Self, io::Error> {
         // Support pretty much every feature of a Keyboard or a Mouse in a VirtualDevice so that no event from the original input devices gets lost
         // TODO investigate the rare possibility that a device is e.g. a Joystick and a Keyboard or a Mouse at the same time, which could lead to lost events
 
@@ -349,7 +400,7 @@ impl KbdOut {
             .name("kanata")
             // libinput's "disable while typing" feature don't work when bus_type
             // is set to BUS_USB, but appears to work when it's set to BUS_I8042.
-            .input_id(evdev::InputId::new(evdev::BusType::BUS_I8042, 1, 1, 1))
+            .input_id(evdev::InputId::new(bus_type, 1, 1, 1))
             .with_keys(&keys)?
             .with_relative_axes(&relative_axes)?;
         let device = if trackpoint {
@@ -619,6 +670,7 @@ fn devices_from_input_paths(
 fn discover_devices(
     include_names: Option<&[String]>,
     exclude_names: Option<&[String]>,
+    device_detect_mode: DeviceDetectMode,
 ) -> Vec<(Device, String)> {
     log::info!("looking for devices in /dev/input");
     let devices: Vec<_> = evdev::enumerate()
@@ -631,32 +683,31 @@ fn discover_devices(
             )
         })
         .filter(|pd| {
-            is_input_device(&pd.0)
-                && match include_names {
-                    None => true,
-                    Some(include_names) => {
-                        let name = pd.0.name().unwrap_or("");
-                        if include_names.iter().any(|include| name == include) {
-                            log::info!("device [{}:{name}] is included", &pd.1);
-                            true
-                        } else {
-                            log::info!("device [{}:{name}] is ignored", &pd.1);
-                            false
-                        }
+            let is_input = is_input_device(&pd.0, device_detect_mode);
+            (match include_names {
+                None => is_input,
+                Some(include_names) => {
+                    let name = pd.0.name().unwrap_or("");
+                    if include_names.iter().any(|include| name == include) {
+                        log::info!("device [{}:{name}] is included", &pd.1);
+                        true
+                    } else {
+                        log::info!("device [{}:{name}] is ignored", &pd.1);
+                        false
                     }
                 }
-                && match exclude_names {
-                    None => true,
-                    Some(exclude_names) => {
-                        let name = pd.0.name().unwrap_or("");
-                        if exclude_names.iter().any(|exclude| name == exclude) {
-                            log::info!("device [{}:{name}] is excluded", &pd.1);
-                            false
-                        } else {
-                            true
-                        }
+            }) && (match exclude_names {
+                None => true,
+                Some(exclude_names) => {
+                    let name = pd.0.name().unwrap_or("");
+                    if exclude_names.iter().any(|exclude| name == exclude) {
+                        log::info!("device [{}:{name}] is excluded", &pd.1);
+                        false
+                    } else {
+                        true
                     }
                 }
+            })
         })
         .collect();
     devices

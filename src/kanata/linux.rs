@@ -20,11 +20,13 @@ impl Kanata {
         info!("entering the event loop");
 
         let k = kanata.lock();
+        let allow_hardware_repeat = k.allow_hardware_repeat;
         let mut kbd_in = match KbdIn::new(
             &k.kbd_in_paths,
             k.continue_if_no_devices,
             k.include_names.clone(),
             k.exclude_names.clone(),
+            k.device_detect_mode,
         ) {
             Ok(kbd_in) => kbd_in,
             Err(e) => {
@@ -57,6 +59,10 @@ impl Kanata {
                 };
 
                 check_for_exit(&key_event);
+
+                if key_event.value == KeyValue::Repeat && !allow_hardware_repeat {
+                    continue;
+                }
 
                 if key_event.value == KeyValue::Tap {
                     // Scroll event for sure. Only scroll events produce Tap.

@@ -2,7 +2,7 @@
 
 <!-- NOTE: GitHub release doc seems to not support multiline paragraph joining as opposed to other places markdown is used in GitHub. Keep paragraphs on one line in this file, as ugly as it is to do so. -->
 
-Link to the appropriate configuration guide version: [guide link](https://github.com/jtroo/kanata/blob/v1.6.1/docs/config.adoc).
+Link to the appropriate configuration guide version: [guide link TODO: FIX LINK](https://github.com/jtroo/kanata/blob/FIXME/docs/config.adoc).
 
 ## Changelog (since <TODO: previous_version_here>)
 
@@ -20,7 +20,7 @@ The attached `kanata.kbd` file is tested to work with the current version. The o
 <details>
 <summary>Instructions</summary>
 
-**NOTE:** All Linux binaries are compiled for x86-64 architectures only.
+**NOTE:** All Windows binaries are compiled for x86-64 architectures only.
 
 Download `kanata.exe`. Optionally, download `kanata.kbd`. With the two files in the same directory, you can double-click the `exe` to start kanata. Kanata does not start a background process, so the window needs to stay open after startup. See [this discussion](https://github.com/jtroo/kanata/discussions/193) for tips to run kanata in the background.
 
@@ -39,7 +39,7 @@ This variant contains the same output change as in the `scancode` variant below,
 
 ---
 
-**NOTE:** The `kanata_legacy_output.exe` variant has the same input `dofsrc` handling as the standard `kanata.exe` file. It uses the same output mechanism as the standard `kanata.exe` variant in version 1.6.1 and earlier. In other words the formerly `experimental_scancode` variant is nwow default binary. The non-legacy variants contain changes for [an issue](https://github.com/jtroo/kanata/issues/567), which is omitted from this legacy variant. The legacy variant is included in case issues are found with the new output mechanism.
+**NOTE:** The `kanata_legacy_output.exe` variant has the same input `dofsrc` handling as the standard `kanata.exe` file. It uses the same output mechanism as the standard `kanata.exe` variant in version 1.6.1 and earlier. In other words the formerly `experimental_scancode` variant is now the default binary. The non-legacy variants contain changes for [an issue](https://github.com/jtroo/kanata/issues/567); the fix is omitted from this legacy variant. The legacy variant is included in case issues are found with the new output mechanism.
 
 ---
 
@@ -50,7 +50,7 @@ This variant contains the same output change as in the `scancode` variant below,
 <details>
 <summary>Instructions</summary>
 
-**NOTE:** All Windows binaries are compiled for x86 architectures only.
+**NOTE:** All Linux binaries are compiled for x86 architectures only.
 
 Download `kanata`.
 
@@ -72,7 +72,7 @@ To avoid requiring `sudo`, [follow the instructions here](https://github.com/jtr
 **WARNING**: feature support on macOS [is limited](https://github.com/jtroo/kanata/blob/main/docs/platform-known-issues.adoc#macos).
 
 ### For macOS 11 and newer:
-- Install the [Karabiner VirtualHiDDevice Driver](https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/blob/main/dist/Karabiner-DriverKit-VirtualHIDDevice-3.1.0.pkg).
+- Install the [Karabiner VirtualHiDDevice Driver](https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/blob/main/dist/Karabiner-DriverKit-VirtualHIDDevice-5.0.0.pkg).
 
 To activate it:
 
@@ -120,7 +120,7 @@ This issue in the Interception driver exists: https://github.com/oblitum/Interce
 
 ### Description
 
-These variants use the [Interception driver](http://www.oblita.com/interception) instead of Windows hooks. You will need to install the driver using the assets from the linked website or from the [copy in this repo](https://github.com/jtroo/kanata/tree/main/assets). The benefit of using this driver is that it is a lower-level mechanism than Windows hooks. This means `kanata` will work in more applications, including administrator-privileged apps.
+These variants use the [Interception driver](https://github.com/oblitum/Interception) instead of Windows hooks. You will need to install the driver using the release or from the [copy in this repo](https://github.com/jtroo/kanata/tree/main/assets). The benefit of using this driver is that it is a lower-level mechanism than Windows hooks. This means `kanata` will work in more applications.
 
 ### Steps to install the driver
 
@@ -149,15 +149,11 @@ C:\Users\my_user\Documents\
 ## kanata\_passthru.dll
 
 <details>
-<summary>Explanation</summary>
+<summary>Explanation and instructions</summary>
 
 The Windows `kanata_passthru.dll` file allows using Kanata as a library within AutoHotkey to avoid conflicts between keyboard hooks installed by both. You can channel keyboard input events received by AutoHotkey into Kanata's keyboard engine and get the transformed keyboard output events (per your Kanata config) that AutoHotkey can then send to the OS.
-</details>
 
-<details>
-<summary>Instructions</summary>
-
-Download `kanata_passthru.dll`, then the [simulated_passthru_ahk](https://github.com/jtroo/kanata/blob/main/docs/simulated_passthru_ahk) folder with a brief example, place the dll there, open `kanata_passthru.ahk` to read what the example does and then double-click to launch it.
+To make use of this, download `kanata_passthru.dll`, then the [simulated_passthru_ahk](https://github.com/jtroo/kanata/blob/main/docs/simulated_passthru_ahk) folder with a brief example, place the dll there, open `kanata_passthru.ahk` to read what the example does and then double-click to launch it.
 </details>
 
 ## sha256 checksums
