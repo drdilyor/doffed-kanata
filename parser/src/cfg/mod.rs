@@ -425,7 +425,7 @@ pub struct IntermediateCfg {
 }
 
 // A snapshot of enviroment variables, or an error message with an explanation
-// why env vars are not not supported.
+// why env vars are not supported.
 pub type EnvVars = std::result::Result<Vec<(String, String)>, String>;
 
 #[allow(clippy::type_complexity)] // return type is not pub
@@ -859,7 +859,7 @@ pub fn parse_cfg_raw_string(
     let dofchordsv2_spanned_filter =
         |exprs: &&Spanned<Vec<SExpr>>| -> bool { dofchordsv2_filter(&&exprs.t) };
 
-    s.trans_forbidden_reason = Some("Transparent action is forbidden within chordsv2");
+    s.pctx.trans_forbidden_reason = Some("Transparent action is forbidden within chordsv2");
     let chords_v2_exprs = root_exprs
         .iter()
         .filter(dofchordsv2_filter)
@@ -882,7 +882,7 @@ pub fn parse_cfg_raw_string(
             )
         }
     };
-    s.trans_forbidden_reason = None;
+    s.pctx.trans_forbidden_reason = None;
     if chords_v2.is_some() && !cfg.concurrent_tap_hold {
         return Err(anyhow!(
             "With dofchordsv2 defined, concurrent-tap-hold in dofcfg must be true.\n\
@@ -1298,6 +1298,12 @@ enum SpannedLayerExprs {
     CustomMapping(Spanned<Vec<SExpr>>),
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ParserContext {
+    is_within_defvirtualkeys: bool,
+    trans_forbidden_reason: Option<&'static str>,
+}
+
 #[derive(Debug)]
 pub struct ParserState {
     layers: KLayers,
@@ -1315,8 +1321,8 @@ pub struct ParserState {
     default_sequence_input_mode: SequenceInputMode,
     block_unmapped_keys: bool,
     switch_max_key_timing: Cell<u16>,
-    trans_forbidden_reason: Option<&'static str>,
     multi_action_nest_count: Cell<u16>,
+    pctx: ParserContext,
     pub lsp_hints: RefCell<LspHints>,
     a: Arc<Allocations>,
 }
@@ -1346,10 +1352,10 @@ impl Default for ParserState {
             default_sequence_input_mode: default_cfg.sequence_input_mode,
             block_unmapped_keys: default_cfg.block_unmapped_keys,
             switch_max_key_timing: Cell::new(0),
-            trans_forbidden_reason: None,
             multi_action_nest_count: Cell::new(0),
             lsp_hints: Default::default(),
             a: unsafe { Allocations::new() },
+            pctx: ParserContext::default(),
         }
     }
 }
@@ -1589,13 +1595,18 @@ fn parse_action_atom(ac_span: &Spanned<String>, s: &ParserState) -> Result<&'sta
     }
     match ac {
         "_" | "‗" | "≝" => {
-            if let Some(trans_forbidden_reason) = s.trans_forbidden_reason {
+            if let Some(trans_forbidden_reason) = s.pctx.trans_forbidden_reason {
                 bail_span!(ac_span, "{trans_forbidden_reason}");
             } else {
                 return Ok(s.a.sref(Action::Trans));
             }
         }
-        "XX" | "✗" | "∅" | "•" => return Ok(s.a.sref(Action::NoOp)),
+        "XX" | "✗" | "∅" | "•" => {
+            if s.pctx.is_within_defvirtualkeys {
+                log::warn!("XX within defvirtualkeys is likely incorrect. You should use nop0-nop9 instead.");
+            }
+            return Ok(s.a.sref(Action::NoOp));
+        }
         "lrld" => return custom(CustomAction::LiveReload, &s.a),
         "lrld-next" | "lrnx" => return custom(CustomAction::LiveReloadNext, &s.a),
         "lrld-prev" | "lrpv" => return custom(CustomAction::LiveReloadPrev, &s.a),
@@ -1685,10 +1696,17 @@ fn parse_action_atom(ac_span: &Spanned<String>, s: &ParserState) -> Result<&'sta
                     .push(alias, ac_span.span.clone());
                 Ok(*ac)
             }
-            None => bail!(
-                "Referenced unknown alias {}. Note that order of declarations matter.",
-                alias
-            ),
+            None => match s.pctx.is_within_defvirtualkeys {
+                true => bail_span!(
+                    ac_span,
+                    "Aliases are not usable within defvirtualkeys. You may use vars or templates.",
+                ),
+                false => bail_span!(
+                    ac_span,
+                    "Referenced unknown alias {}. Note that order of declarations matter.",
+                    alias
+                ),
+            },
         };
     }
     if let Some(unisym) = ac.strip_prefix('🔣') {
@@ -3035,6 +3053,7 @@ fn parse_fake_keys(exprs: &[&Vec<SExpr>], s: &mut ParserState) -> Result<()> {
 }
 
 fn parse_virtual_keys(exprs: &[&Vec<SExpr>], s: &mut ParserState) -> Result<()> {
+    s.pctx.is_within_defvirtualkeys = true;
     for expr in exprs {
         let mut subexprs = check_first_expr(expr.iter(), "defvirtualkeys")?;
         // Read k-v pairs from the configuration
@@ -3067,6 +3086,7 @@ fn parse_virtual_keys(exprs: &[&Vec<SExpr>], s: &mut ParserState) -> Result<()> 
                 .insert(key_name, key_name_expr.span());
         }
     }
+    s.pctx.is_within_defvirtualkeys = false;
     if s.virtual_keys.len() > KEYS_IN_ROW {
         bail!(
             "Maximum number of virtual keys is {KEYS_IN_ROW}, found {}",
