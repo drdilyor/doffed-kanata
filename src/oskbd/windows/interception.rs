@@ -17,7 +17,7 @@ pub struct InputEvent(pub Stroke);
 use std::fmt;
 impl fmt::Display for InputEvent {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -180,6 +180,10 @@ impl KbdOut {
     pub fn write(&mut self, event: InputEvent) -> Result<(), io::Error> {
         write_interception(event);
         Ok(())
+    }
+
+    pub fn write_code_raw(&mut self, code: u16, value: KeyValue) -> Result<(), io::Error> {
+        super::write_code_raw(code, value)
     }
 
     pub fn write_code(&mut self, code: u32, value: KeyValue) -> Result<(), io::Error> {

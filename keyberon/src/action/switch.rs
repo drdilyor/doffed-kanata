@@ -262,7 +262,7 @@ impl OpCode {
     /// above, this has a resolution of 128 ms (rounded down).
     pub fn new_ticks_since_gt(nth_key: u8, ticks_since: u16) -> Self {
         assert!(nth_key <= MAX_KEY_RECENCY);
-        Self(TICKS_SINCE_VAL_GT | lossy_compress_ticks(ticks_since) | u16::from(nth_key) << 10)
+        Self(TICKS_SINCE_VAL_GT | lossy_compress_ticks(ticks_since) | (u16::from(nth_key) << 10))
     }
 
     /// Returns a new opcode that returns true if the n'th most recent key was pressed greater
@@ -272,7 +272,7 @@ impl OpCode {
     /// above, this has a resolution of 128 ms (rounded down).
     pub fn new_ticks_since_lt(nth_key: u8, ticks_since: u16) -> Self {
         assert!(nth_key <= MAX_KEY_RECENCY);
-        Self(TICKS_SINCE_VAL_LT | lossy_compress_ticks(ticks_since) | u16::from(nth_key) << 10)
+        Self(TICKS_SINCE_VAL_LT | lossy_compress_ticks(ticks_since) | (u16::from(nth_key) << 10))
     }
 
     /// Return a new OpCode for a boolean operation that ends (non-inclusive) at the specified
@@ -411,8 +411,7 @@ fn evaluate_boolean(
                 });
                 assert!(
                     res.is_ok(),
-                    "exceeded boolean op depth {}",
-                    MAX_BOOL_EXPR_DEPTH
+                    "exceeded boolean op depth {MAX_BOOL_EXPR_DEPTH}"
                 );
                 (current_op, current_end_index) = (operator.op, operator.idx);
                 current_index += 1;

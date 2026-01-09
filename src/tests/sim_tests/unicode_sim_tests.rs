@@ -20,3 +20,36 @@ fn unicode() {
     .no_time();
     assert_eq!(r#"outU:( outU:) outU:" outU:( outU:)"#, result);
 }
+
+#[test]
+#[cfg(target_os = "macos")]
+fn macos_unicode_handling() {
+    let result = simulate(
+        r##"
+         (dofcfg)
+         (dofsrc a)
+         (doflayer base
+             (unicode "🎉")  ;; Test with an emoji that uses multi-unit UTF-16
+         )
+        "##,
+        "d:a t:100",
+    )
+    .no_time();
+    assert_eq!("outU:🎉", result);
+}
+
+#[test]
+fn unicode_pulus() {
+    let result = simulate(
+        "
+(dofsrc a b)
+(doflayer _
+ (unicode 🚆)
+ (unicode U+1F686)
+)
+        ",
+        "d:a t:10 d:b t:10",
+    )
+    .no_time();
+    assert_eq!("outU:🚆 outU:🚆", result);
+}

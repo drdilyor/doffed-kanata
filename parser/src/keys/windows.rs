@@ -409,6 +409,8 @@ impl OsCode {
             0xC1 => Some(OsCode::KEY_RO),
             VK_CONVERT => Some(OsCode::KEY_HENKAN),
             VK_NONCONVERT => Some(OsCode::KEY_MUHENKAN),
+            VK_DBE_KATAKANA => Some(OsCode::KEY_KATAKANA),
+            255 => Some(OsCode::KEY_YEN),
             256 => Some(OsCode::BTN_0),
             257 => Some(OsCode::BTN_1),
             258 => Some(OsCode::BTN_2),
@@ -1054,6 +1056,8 @@ impl OsCode {
             OsCode::BTN_MIDDLE => VK_MBUTTON,
             OsCode::BTN_SIDE => VK_XBUTTON1,
             OsCode::BTN_EXTRA => VK_XBUTTON2,
+            OsCode::KEY_YEN => 255,
+            OsCode::KEY_KATAKANA => VK_DBE_KATAKANA,
             osc => osc as u16,
         }
     }

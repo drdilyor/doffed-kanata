@@ -15,9 +15,12 @@ pub const TAP_HOLD_PRESS_TIMEOUT_A: &str = "tap⬓↓timeout";
 pub const TAP_HOLD_RELEASE_TIMEOUT: &str = "tap-hold-release-timeout";
 pub const TAP_HOLD_RELEASE_TIMEOUT_A: &str = "tap⬓↑timeout";
 pub const TAP_HOLD_RELEASE_KEYS: &str = "tap-hold-release-keys";
+pub const TAP_HOLD_RELEASE_KEYS_TAP_RELEASE: &str = "tap-hold-release-tap-keys-release";
 pub const TAP_HOLD_RELEASE_KEYS_A: &str = "tap⬓↑keys";
 pub const TAP_HOLD_EXCEPT_KEYS: &str = "tap-hold-except-keys";
 pub const TAP_HOLD_EXCEPT_KEYS_A: &str = "tap⬓⤫keys";
+pub const TAP_HOLD_TAP_KEYS: &str = "tap-hold-tap-keys";
+pub const TAP_HOLD_TAP_KEYS_A: &str = "tap⬓tapkeys";
 pub const MULTI: &str = "multi";
 pub const MACRO: &str = "macro";
 pub const MACRO_REPEAT: &str = "macro-repeat";
@@ -55,6 +58,8 @@ pub const ON_PRESS_FAKEKEY: &str = "on-press-fakekey";
 pub const ON_PRESS_FAKEKEY_A: &str = "on↓fakekey";
 pub const ON_RELEASE_FAKEKEY: &str = "on-release-fakekey";
 pub const ON_RELEASE_FAKEKEY_A: &str = "on↑fakekey";
+pub const ON_PRESS_DELAY: &str = "on-press-delay";
+pub const ON_RELEASE_DELAY: &str = "on-release-delay";
 pub const ON_PRESS_FAKEKEY_DELAY: &str = "on-press-fakekey-delay";
 pub const ON_PRESS_FAKEKEY_DELAY_A: &str = "on↓fakekey-delay";
 pub const ON_RELEASE_FAKEKEY_DELAY: &str = "on-release-fakekey-delay";
@@ -68,6 +73,10 @@ pub const MWHEEL_UP_A: &str = "🖱☸↑";
 pub const MWHEEL_DOWN_A: &str = "🖱☸↓";
 pub const MWHEEL_LEFT_A: &str = "🖱☸←";
 pub const MWHEEL_RIGHT_A: &str = "🖱☸→";
+pub const MWHEEL_ACCEL_UP: &str = "mwheel-accel-up";
+pub const MWHEEL_ACCEL_DOWN: &str = "mwheel-accel-down";
+pub const MWHEEL_ACCEL_LEFT: &str = "mwheel-accel-left";
+pub const MWHEEL_ACCEL_RIGHT: &str = "mwheel-accel-right";
 pub const MOVEMOUSE_UP: &str = "movemouse-up";
 pub const MOVEMOUSE_DOWN: &str = "movemouse-down";
 pub const MOVEMOUSE_LEFT: &str = "movemouse-left";
@@ -107,6 +116,7 @@ pub const CAPS_WORD_CUSTOM_TOGGLE_A: &str = "word⇪custom-toggle";
 pub const DYNAMIC_MACRO_RECORD_STOP_TRUNCATE: &str = "dynamic-macro-record-stop-truncate";
 pub const SWITCH: &str = "switch";
 pub const SEQUENCE: &str = "sequence";
+pub const SEQUENCE_NOERASE: &str = "sequence-noerase";
 pub const UNMOD: &str = "unmod";
 pub const UNSHIFT: &str = "unshift";
 pub const UNSHIFT_A: &str = "un⇧";
@@ -117,7 +127,15 @@ pub const ON_PRESS_A: &str = "on↓";
 pub const ON_RELEASE: &str = "on-release";
 pub const ON_RELEASE_A: &str = "on↑";
 pub const ON_IDLE: &str = "on-idle";
+pub const ON_PHYSICAL_IDLE: &str = "on-physical-idle";
 pub const HOLD_FOR_DURATION: &str = "hold-for-duration";
+pub const CLIPBOARD_SET: &str = "clipboard-set";
+pub const CLIPBOARD_CMD_SET: &str = "clipboard-cmd-set";
+pub const CLIPBOARD_SAVE: &str = "clipboard-save";
+pub const CLIPBOARD_RESTORE: &str = "clipboard-restore";
+pub const CLIPBOARD_SAVE_SET: &str = "clipboard-save-set";
+pub const CLIPBOARD_SAVE_CMD_SET: &str = "clipboard-save-cmd-set";
+pub const CLIPBOARD_SAVE_SWAP: &str = "clipboard-save-swap";
 
 pub fn is_list_action(ac: &str) -> bool {
     const LIST_ACTIONS: &[&str] = &[
@@ -134,9 +152,12 @@ pub fn is_list_action(ac: &str) -> bool {
         TAP_HOLD_RELEASE_TIMEOUT,
         TAP_HOLD_RELEASE_TIMEOUT_A,
         TAP_HOLD_RELEASE_KEYS,
+        TAP_HOLD_RELEASE_KEYS_TAP_RELEASE,
         TAP_HOLD_RELEASE_KEYS_A,
         TAP_HOLD_EXCEPT_KEYS,
         TAP_HOLD_EXCEPT_KEYS_A,
+        TAP_HOLD_TAP_KEYS,
+        TAP_HOLD_TAP_KEYS_A,
         MULTI,
         MACRO,
         MACRO_REPEAT,
@@ -167,6 +188,8 @@ pub fn is_list_action(ac: &str) -> bool {
         ON_PRESS_FAKEKEY_A,
         ON_RELEASE_FAKEKEY,
         ON_RELEASE_FAKEKEY_A,
+        ON_PRESS_DELAY,
+        ON_RELEASE_DELAY,
         ON_PRESS_FAKEKEY_DELAY,
         ON_PRESS_FAKEKEY_DELAY_A,
         ON_RELEASE_FAKEKEY_DELAY,
@@ -180,6 +203,10 @@ pub fn is_list_action(ac: &str) -> bool {
         MWHEEL_LEFT_A,
         MWHEEL_RIGHT,
         MWHEEL_RIGHT_A,
+        MWHEEL_ACCEL_UP,
+        MWHEEL_ACCEL_DOWN,
+        MWHEEL_ACCEL_LEFT,
+        MWHEEL_ACCEL_RIGHT,
         MOVEMOUSE_UP,
         MOVEMOUSE_UP_A,
         MOVEMOUSE_DOWN,
@@ -219,6 +246,7 @@ pub fn is_list_action(ac: &str) -> bool {
         DYNAMIC_MACRO_RECORD_STOP_TRUNCATE,
         SWITCH,
         SEQUENCE,
+        SEQUENCE_NOERASE,
         UNMOD,
         UNSHIFT,
         UNSHIFT_A,
@@ -229,12 +257,20 @@ pub fn is_list_action(ac: &str) -> bool {
         ON_RELEASE,
         ON_RELEASE_A,
         ON_IDLE,
+        ON_PHYSICAL_IDLE,
         HOLD_FOR_DURATION,
         MACRO_CANCEL_ON_NEXT_PRESS,
         MACRO_REPEAT_CANCEL_ON_NEXT_PRESS,
         MACRO_CANCEL_ON_NEXT_PRESS_CANCEL_ON_RELEASE,
         MACRO_REPEAT_CANCEL_ON_NEXT_PRESS_CANCEL_ON_RELEASE,
         ONE_SHOT_PAUSE_PROCESSING,
+        CLIPBOARD_SET,
+        CLIPBOARD_CMD_SET,
+        CLIPBOARD_SAVE,
+        CLIPBOARD_RESTORE,
+        CLIPBOARD_SAVE_SET,
+        CLIPBOARD_SAVE_CMD_SET,
+        CLIPBOARD_SAVE_SWAP,
     ];
     LIST_ACTIONS.contains(&ac)
 }

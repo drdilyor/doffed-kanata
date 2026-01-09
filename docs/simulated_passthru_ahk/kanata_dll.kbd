@@ -5,7 +5,7 @@
 )
 
 (dofvar
-  🕐↕	1000 ;;|500| tap-timeout
+  🕐↕	1000 ;;|500| tap-repress-timeout
   🕐🠿	1500 ;;|500| hold-timeout
   )
 (dofalias	;;      timeout→ 	tap	  hold   ¦	 tap	 hold ←action

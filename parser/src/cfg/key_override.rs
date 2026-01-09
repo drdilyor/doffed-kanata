@@ -1,14 +1,14 @@
 //! Contains code to handle global override keys.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::keys::*;
 
 use kanata_keyberon::key_code::KeyCode;
-use kanata_keyberon::layout::State;
 use kanata_keyberon::layout::NORMAL_KEY_FLAG_CLEAR_ON_NEXT_ACTION;
 use kanata_keyberon::layout::NORMAL_KEY_FLAG_CLEAR_ON_NEXT_RELEASE;
+use kanata_keyberon::layout::State;
 
 /// Scratch space containing allocations used to process override information. Exists as an
 /// optimization to reuse allocations between iterations.
@@ -125,25 +125,21 @@ impl Overrides {
             return;
         };
         let mut cur_chord_size = 0;
-        if let Some(ovd) = ovds
-            .iter()
-            .filter(|ovd| {
-                let mask = ovd.get_mod_mask();
-                if mask & active_mod_mask == mask {
-                    // keep only the longest matching prefix.
-                    let chord_size = ovd.in_mod_oscs.len() + 1;
-                    if chord_size <= cur_chord_size {
-                        false
-                    } else {
-                        cur_chord_size = chord_size;
-                        true
-                    }
-                } else {
+        if let Some(ovd) = ovds.iter().rfind(|ovd| {
+            let mask = ovd.get_mod_mask();
+            if mask & active_mod_mask == mask {
+                // keep only the longest matching prefix.
+                let chord_size = ovd.in_mod_oscs.len() + 1;
+                if chord_size <= cur_chord_size {
                     false
+                } else {
+                    cur_chord_size = chord_size;
+                    true
                 }
-            })
-            .last()
-        {
+            } else {
+                false
+            }
+        }) {
             log::debug!("using override {ovd:?}");
             ovd.add_override_keys(oscs_to_add);
             ovd.add_removed_keys(oscs_to_remove);

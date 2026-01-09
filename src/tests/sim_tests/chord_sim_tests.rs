@@ -232,11 +232,11 @@ static CHORD_INTO_TAP_HOLD_CFG: &str = "\
 fn sim_chord_into_tap_hold() {
     let result = simulate(
         CHORD_INTO_TAP_HOLD_CFG,
-        "d:a t:50 d:b t:149 u:a u:b t:5 \
-         d:a t:50 d:b t:148 u:a u:b t:1000",
+        "d:a t:50 d:b t:150 u:a u:b t:5 \
+         d:a t:50 d:b t:149 u:a u:b t:1000",
     );
     assert_eq!(
-        "t:199ms\nout:↓Y\nt:10ms\nout:↑Y\nt:193ms\nout:↓X\nt:10ms\nout:↑X",
+        "t:199ms\nout:↓Y\nt:10ms\nout:↑Y\nt:195ms\nout:↓X\nt:10ms\nout:↑X",
         result
     );
 }
@@ -400,6 +400,33 @@ fn sim_chord_oneshot() {
     assert_eq!(
         "t:10ms dn:RShift t:2500ms up:RShift t:530ms \
          dn:RShift t:521ms dn:C t:5ms up:RShift up:C",
+        result
+    );
+}
+
+#[test]
+fn sim_chord_timeout_events() {
+    let result = simulate(
+        "
+(dofcfg
+ concurrent-tap-hold yes
+ process-unmapped-keys yes
+)
+(defvirtualkeys
+ v-macro-word-end (macro spc)
+)
+(dofsrc a b c)
+(dofchordsv2-experimental
+ (a b c) (macro x y z (on-press tap-vkey v-macro-word-end)) 200 all-released ()
+ (a b) (macro x y (on-press tap-vkey v-macro-word-end)) 200 all-released ()
+)
+(doflayer base a b c)
+        ",
+        "d:a t:10 d:b t:3000 u:a u:b t:100",
+    )
+    .to_ascii();
+    assert_eq!(
+        "t:201ms dn:X t:1ms up:X t:1ms dn:Y t:1ms up:Y t:4ms dn:Space t:1ms up:Space",
         result
     );
 }

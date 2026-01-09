@@ -207,3 +207,55 @@ fn chorded_keys_hidden_delaytype() {
     );
 }
 */
+
+#[test]
+fn noerase() {
+    let result = simulate(
+        "(dofcfg sequence-input-mode visible-backspaced)
+         (dofsrc)
+         (doflayermap (base)
+           0 sldr
+           u (t! maybe-noerase u)
+         )
+         (doftemplate maybe-noerase (char)
+            (multi
+             (switch
+              ((key-history ' 1)) (sequence-noerase 1) fallthrough
+              () $char break
+            ))
+         )
+         (defvirtualkeys s1 z)
+         (dofseq s1 (' u))
+        ",
+        "d:0 u:0 d:' t:50 d:u t:500",
+    )
+    .no_time()
+    .to_ascii();
+    assert_eq!(
+        "dn:Quote dn:U dn:BSpace up:BSpace up:Quote up:U dn:Z up:Z",
+        result,
+    );
+}
+
+#[test]
+fn tap_hold_pending() {
+    let result = simulate(
+        "
+(dofalias md     (tap-hold 200 200 s S-s))
+(dofsrc s d j)
+(doflayer base @md d sldr)
+(doffakekeys _u  (unicode μ))
+(dofseq _u     (s))
+        ",
+        "
+d:KeyJ t:10 u:KeyJ t:10
+d:KeyS t:10 u:KeyS t:10 d:KeyD t:10 u:KeyD t:10
+
+d:KeyJ t:10 u:KeyJ t:10
+d:KeyS t:10 d:KeyD t:10 u:KeyS t:10 u:KeyD t:10",
+    )
+    .no_time()
+    .no_releases()
+    .to_ascii();
+    assert_eq!("outU:μ dn:D outU:μ dn:D", result,);
+}

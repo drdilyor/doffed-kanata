@@ -45,7 +45,10 @@ fn parse_zippy_inner(
     _s: &ParserState,
     _f: &mut FileContentProvider,
 ) -> Result<(ZchPossibleChords, ZchConfig)> {
-    bail_expr!(&exprs[0], "Kanata was not compiled with the \"zippychord\" feature. This configuration is unsupported")
+    bail_expr!(
+        &exprs[0],
+        "Kanata was not compiled with the \"zippychord\" feature. This configuration is unsupported"
+    )
 }
 
 pub(crate) fn parse_zippy(
@@ -297,6 +300,13 @@ mod inner {
     ) -> Result<(ZchPossibleChords, ZchConfig)> {
         use crate::subset::GetOrIsSubsetOfKnownKey::*;
 
+        if exprs[0].atom(None).expect("should be atom") == "dofzippy-experimental" {
+            log::warn!(
+                "You should replace dofzippy-experimental with dofzippy.\n\
+             Using -experimental will be invalid in the future."
+            );
+        }
+
         if exprs.len() < 2 {
             bail_expr!(
                 &exprs[0],
@@ -461,7 +471,10 @@ mod inner {
                                     }
                                     ZchIoMappingType::SingleOutput => {
                                         if output_list.len() < 2 {
-                                            anyhow_expr!(&output_list[1], "{SINGLE_OUTPUT_MULTI_KEY} expects one or more keys or output chords.");
+                                            anyhow_expr!(
+                                                &output_list[1],
+                                                "{SINGLE_OUTPUT_MULTI_KEY} expects one or more keys or output chords."
+                                            );
                                         }
                                         let all_params_except_last =
                                             &output_list[1..output_list.len() - 1];

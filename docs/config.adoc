@@ -28,14 +28,18 @@ may have content not applicable to the version you are using.
 See below for links to specific guide versions.
 
 ifdef::env-github[]
+* https://github.com/jtroo/kanata/blob/v1.10.0/docs/config.adoc[v1.10.0]
+* https://github.com/jtroo/kanata/blob/v1.9.0/docs/config.adoc[v1.9.0]
+* https://github.com/jtroo/kanata/blob/v1.8.1/docs/config.adoc[v1.8.1]
+* https://github.com/jtroo/kanata/blob/v1.8.0/docs/config.adoc[v1.8.0]
 * https://github.com/jtroo/kanata/blob/v1.7.0/docs/config.adoc[v1.7.0]
-* https://github.com/jtroo/kanata/blob/v1.6.1/docs/config.adoc[v1.6.1]
-* https://github.com/jtroo/kanata/blob/v1.6.0/docs/config.adoc[v1.6.0]
 endif::[]
 ifndef::env-github[]
+* link:/config-1.10.0.html[v1.10.0]
+* link:/config-1.9.0.html[v1.9.0]
+* link:/config-1.8.1.html[v1.8.1]
+* link:/config-1.8.0.html[v1.8.0]
 * link:/config-1.7.0.html[v1.7.0]
-* link:/config-1.6.1.html[v1.6.1]
-* link:/config-1.6.0.html[v1.6.0]
 endif::[]
 
 == Preamble
@@ -321,6 +325,8 @@ e.g. in the example above, these affect keys other than `caps`.
 | Map all unmapped keys in this layer.
 |===
 
+If a key is not mapped explicitly or through these wildcards, it will be implicitly mapped to a <<transparent-key,transparent key>>.
+
 [[review-of-required-configuration-entries]]
 === Review of required configuration entries
 
@@ -329,6 +335,7 @@ If you're reading in order, you have now seen all of the required entries:
 * `+dofsrc+`
 * `+doflayer+`
 
+[[minimal-config]]
 An example minimal configuration is:
 
 [source]
@@ -572,9 +579,10 @@ for an action.
 [cols="1,5"]
 |===
 | `$alias-name`
-| The chosen name for the shortcut label for the action.
-It can be used in the rest of the configuration
-by prefixing the name with the `@` character.
+| The chosen shortcut label for the action.
+This shortcut label can be used in the rest of
+the configuration by prefixing it with the `@`
+character.
 
 | `$action`
 | The ouput action used wherever the alias name is referenced.
@@ -662,14 +670,14 @@ you can introduce a shortcut label for an arbitrary string or list.
 [cols="1,5"]
 |===
 | `$var-name`
-| The chosen name for the shortcut label for the action.
-It can be used in the rest of the configuration
-by prefixing the name with the `@` character.
+| The chosen shortcut label for the string or list.
+This shortcut label can be used in the rest of the
+configuration by prefixing it with `$`.
 
 | `$var-value`
 | An arbitrary string or list that will be substituted
 wherever the variable is used.
-A variable can be used by prefixing the variable name with `$`.
+
 |===
 
 **Description**
@@ -699,9 +707,9 @@ Variables are referred to by prefixing their name with `$`.
 [source]
 ----
 (dofvar
-  tap-timeout   100
+  tap-repress-timeout   100
   hold-timeout  200
-  tt $tap-timeout
+  tt $tap-repress-timeout
   ht $hold-timeout
 )
 
@@ -815,6 +823,7 @@ kanata -c startup.cfg -c 2nd.cfg -c 3rd.cfg
 Given the above startup command,
 activating `(lrld-num 2)` would reload the `2nd.cfg` file.
 
+
 [[layer-switch]]
 === layer-switch
 
@@ -902,11 +911,17 @@ inaccurate with regards to its meaning.
 
 **Description**
 
-If you use a single underscore for a key `+_+` then it acts as a "transparent"
-key in a `+doflayer+`. The behaviour depends if `+_+` is on a base layer or a
-while-held layer. When `+_+` is pressed on the active base layer, the key will
-default to the corresponding `dofsrc` key. If `+_+` is pressed on the active
-while-held layer, the base layer's behaviour will activate.
+Kanata maintains a layer stack consisting in order of:
+
+* a stack of temporary layers, where each `layer-while-held` adds one layer on top
+* the base layer, manipulated by `layer-switch`
+* if `delegate-to-first-layer` is enabled: the first layer defined by `doflayer` or `doflayermap`
+* `dofsrc`
+
+A single underscore `+_+` acts as a "transparent" key in the current layer.
+It will invoke the action assigned to the same key position on the next layer in the stack.
+
+NOTE: If `delegate-to-first-layer` is enabled and the base layer is currently set to the first defined layer, a transparent key on the base layer will fall through directly to `dofsrc`.
 
 [[use-dofsrc]]
 === use-dofsrc
@@ -984,8 +999,15 @@ are composed of multiple codepoints.
 
 **Description**
 
+NOTE: The <<clipboard-actions>> may output unicode characters more consistently.
+
 The `+unicode+` (or `+🔣+`) action accepts a single unicode character (but not
-a composed character, so 🤲, but not 🤲🏿).
+a composed character, so 🤲, but not 🤲🏿),
+or a single unicode number prefixed with `U+`.
+For example, both of these actions are the same:
+- `(unicode 🚆)`
+- `(unicode U+1F686)`
+
 If you want to output a glyph that is composed of multiple codepoints,
 you can use <<macro>> with multiple `unicode` actions.
 
@@ -997,6 +1019,10 @@ application.
 
 NOTE: If using Linux, make sure to look at the
 <<linux-only-linux-unicode-u-code,unicode behaviour customization>> in dofcfg.
+Furthermore, on Wayland the unicode mechanism may be broken entirely.
+On Wayland you can install then use the `wtype` program,
+using <<cmd, cmd>> to execute it.
+For example: `(cmd wtype á)`
 
 .Example:
 [source]
@@ -1358,9 +1384,16 @@ You can activate mouse actions with the string actions below.
 | Tap backward mouse button.
 |===
 
-In Linux and Windows-Interception,
+In Linux and Windows,
 the hold actions can be used within `dofsrc` and `doflayermap`
 to remap mouse buttons like keyboard keys.
+
+NOTE:
+On Windows, the Kanata process must be restarted
+for it to begin or to stop handling mouse events;
+changing dofsrc then live-reloading will not
+begin handling mouse events
+if dofsrc previously did not have any mouse events in dofsrc.
 
 **Description**
 
@@ -1373,7 +1406,7 @@ The mouse button actions are:
 * `mbck`: backward mouse button
 
 The mouse button will be held while the key mapped to it is held.
-Using Linux and Windows-Interception,
+Only on Linux and Windows,
 the above actions are also usable in `dofsrc`
 to enable remapping specified mouse actions in your layers,
 like you would with keyboard keys.
@@ -1440,6 +1473,15 @@ to remap scroll events as if they were keys,
 corresponding to up, down, left, right respectively:
 `mwu`, `mwd`, `mwl`, `mwr`.
 
+The remapping of mouse events is only effective on Linux and Windows.
+
+NOTE:
+On Windows, the Kanata process must be restarted
+for it to begin or to stop handling mouse events;
+changing dofsrc then live-reloading will not
+begin handling mouse events
+if dofsrc previously did not have any mouse events in dofsrc.
+
 **Description**
 
 The mouse wheel actions are:
@@ -1451,7 +1493,7 @@ The mouse wheel actions are:
 
 All of these actions accept two number strings. The first is the interval
 (unit: ms) between scroll actions. The second number is the distance
-(unit: arbitrary). In both Windows and Linux, 120 distance units is equivalent
+(unit: arbitrary). In both Linux and Windows, 120 distance units is equivalent
 to a notch movement on a physical wheel. You can play with the parameters to
 see what feels correct to you. Both numbers must be in the range [1,65535].
 
@@ -1459,7 +1501,7 @@ NOTE: In Linux, not all desktop environments support the `REL_WHEEL_HI_RES` even
 If this is the case for yours,
 it will likely be a better experience to use a distance value that is a multiple of 120.
 
-On Linux and Interception, you can also choose to read from a mouse device.
+On Linux and Windows, you can also choose to read from a mouse device.
 When doing so, using the `mwu`, `mwd`, `mwl`, `mwr` key names in `dofsrc`
 allow you to remap the mouse scroll up/down/left/right actions like you would
 with keyboard keys.
@@ -1469,6 +1511,65 @@ only a full "notch" of the scroll wheel will activate the action.
 
 NOTE: If you are using a high-resolution mouse with Interception,
 you will probably get way more events than you intended.
+
+[[mouse-wheel-inertial]]
+===== Mouse wheel: inertial variants
+
+**Reference**
+
+The `mwheel-accel-*` actions allow you to emulate a mouse wheel,
+with "inertial" properties,
+meaning scroll speed accelerates while active and decelerates when not.
+You can adjust factors of acceleration and deceleration.
+
+.Syntax:
+[source]
+----
+(mwheel-accel-$variant $initial-velocity $maximum-velocity $acceleration-multiplier $deceleration-multiplier)
+----
+
+[cols="2,3"]
+|===
+| `$variant`
+| One of `up down left right` representing the scroll direction to use.
+
+| `$initial-velocity`
+| Starting scroll speed, in arbitrary units.
+Suggested starting point: `3`.
+
+| `$maximum-velocity`
+| Starting scroll speed, in arbitrary units.
+Suggested starting point: `1200`.
+
+| `$acceleration-multiplier`
+| Determines acceleration rate of scroll speed.
+Suggested starting point: `1.15`.
+
+| `deceleration-multiplier`
+| Determines deceleration rate of scroll speed.
+Suggested starting point: `0.93`.
+Setting to 0 will make scroll stop abruptly.
+|===
+
+**Description**
+
+An alternative scrolling action can be used via `mwheel-accel-*`.
+This action has "inertial" behaviour which you may prefer.
+
+The recommended starting point for the parameters are as below:
+
+.Example configuration:
+[source]
+----
+(dofvar
+  mw-initial-v 3
+  mw-maximum-v 1200
+  mw-accel 1.15
+  mw-decel 0.93)
+(dofalias
+  mwu (mwheel-accel-up   $mw-initial-v $mw-maximum-v $mw-accel $mw-decel)
+  mwd (mwheel-accel-down $mw-initial-v $mw-maximum-v $mw-accel $mw-decel))
+----
 
 [[mouse-movement]]
 ==== Mouse movement
@@ -1514,7 +1615,7 @@ at a constant rate until a maximum is reached.
 | `$interval`
 | Number of milliseconds between move activations.
 
-| `$acceletaion-time`
+| `$acceleration-time`
 | Number of milliseconds until max distance per activation is reached.
 
 | `$min`
@@ -1558,20 +1659,22 @@ There is a toggable dofcfg option related to `movemouse-accel` - <<movemouse-inh
 
 The action `setmouse` or `set🖱` sets the absolute mouse position.
 
-WARNING: This is only supported in Windows right now.
+WARNING: This is not supported on Linux.
 For an interesting keyboard-centric mouse solution in Linux,
 try looking at
 https://github.com/rvaiya/warpd[warpd].
 
 This list action takes two parameters which are `x` and `y` positions
 of the absolute movement.
-The values go from 0,0 which is the upper-left corner of the screen
-to 65535,65535 which is the lower-right corner of the screen.
-If you have multiple monitors,
-`setmouse` treats them all as a single large screen.
-This can make it a little confusing for how to set the `x, y` values
-to get the positions that you want.
-Experimentation will be needed.
+
+The coordinate system is platform-specific:
+
+* **macOS**: Pixel coordinates. `0,0` is the top-left of the main display,
+  maximum values are your screen resolution (e.g., `1920,1080`).
+* **Windows**: Normalized coordinates from `0,0` (top-left)
+  to `65535,65535` (bottom-right). Multiple monitors are treated as one virtual desktop.
+
+Experimentation will be needed to find the correct values for your setup.
 
 [[mouse-speed]]
 ==== Modify the speed of mouse movements
@@ -1881,12 +1984,12 @@ depending it a key is tapped or held.
 .Syntax:
 [source]
 ----
-(tap-hold $tap-timeout $hold-timeout $tap-action $hold-action)
+(tap-hold $tap-repress-timeout $hold-timeout $tap-action $hold-action)
 ----
 
 [cols="1,4"]
 |===
-| `$tap-timeout`
+| `$tap-repress-timeout`
 | Number of milliseconds for the window that a tap into re-press with hold
 results in the `$tap-action` being held.
 
@@ -1904,12 +2007,14 @@ results in `$tap-action` activating.
 
 .Variants:
 ----
-(tap-hold-press $tap-timeout $hold-timeout $tap-action $hold-action)
-(tap-hold-release $tap-timeout $hold-timeout $tap-action $hold-action)
-(tap-hold-press-timeout $tap-timeout $hold-timeout $tap-action $hold-action $timeout-action)
-(tap-hold-release-timeout $tap-timeout $hold-timeout $tap-action $hold-action $timeout-action)
-(tap-hold-release-keys $tap-timeout $hold-timeout $tap-action $hold-action $tap-keys)
-(tap-hold-except-keys $tap-timeout $hold-timeout $tap-action $hold-action $tap-keys)
+(tap-hold-press $tap-repress-timeout $hold-timeout $tap-action $hold-action)
+(tap-hold-release $tap-repress-timeout $hold-timeout $tap-action $hold-action)
+(tap-hold-press-timeout $tap-repress-timeout $hold-timeout $tap-action $hold-action $timeout-action)
+(tap-hold-release-timeout $tap-repress-timeout $hold-timeout $tap-action $hold-action $timeout-action [?reset-timeout-on-press])
+(tap-hold-release-keys $tap-repress-timeout $hold-timeout $tap-action $hold-action $tap-keys)
+(tap-hold-release-tap-keys-release $tap-repress-timeout $hold-timeout $tap-action $hold-action $tap-trigger-keys-on-press $tap-trigger-keys-on-press-then-release)
+(tap-hold-except-keys $tap-repress-timeout $hold-timeout $tap-action $hold-action $tap-keys)
+(tap-hold-tap-keys $tap-repress-timeout $hold-timeout $tap-action $hold-action $tap-keys)
 ----
 
 [cols="1,2"]
@@ -1927,11 +2032,23 @@ If the defined timeout elapses, `$timeout-action` will activate.
 | `tap-hold-release-timeout`
 | Activate `$hold-action` early if held and another input key is pressed and released.
 If the defined timeout elapses, `$timeout-action` will activate.
+Optionally include `reset-timeout-on-press` to reset timeout duration on a new press,
+giving more time for a subsequent release to activate hold instead of timeout.
 
 | `tap-hold-release-keys`
 | Activate `$hold-action` early if held and another input key is pressed and released.
 The `$tap-keys` parameter is a list of key names.
 Activates `$tap-action` early if a key within `$tap-keys` is pressed before hold activates.
+
+| `tap-hold-release-tap-keys-release`
+| Activate `$hold-action` early if held and another input key is pressed and released.
+The `$tap-keys-...` parameters are lists of key names.
+Activate `$tap-action` early
+if a key within `$tap-trigger-keys-on-press`
+is pressed before hold activates
+Activate `$tap-action` early
+if a key within `$tap-trigger-keys-on-press-then-release`
+is pressed then released before hold activates.
 
 | `tap-hold-except-keys`
 | The `$tap-keys` parameter is a list of key names.
@@ -1940,6 +2057,14 @@ or if the action key is released before hold timeout.
 No key is ever output until the action key is released
 or another key is pressed,
 which differs from the default `tap-hold` behaviour.
+
+| `tap-hold-tap-keys`
+| The `$tap-keys` parameter is a list of key names.
+Activates `$tap-action` early if a key within `$tap-keys` is pressed before hold activates.
+Unlike `tap-hold-release-keys`, does NOT activate `$hold-action` early
+when other keys are pressed and released.
+Waits for full `$hold-timeout` before activating `$hold-action`.
+This is useful for home row mods where fast typing should not trigger modifiers.
 |===
 **Description**
 
@@ -1949,23 +2074,23 @@ key whereas a hold is a long press.
 
 The action takes 4 parameters in the listed order:
 
-. tap timeout (unit: ms)
+. tap repress timeout (unit: ms)
 . hold timeout (unit: ms)
 . tap action
 . hold action
 
-The tap timeout is the number of milliseconds within which a rapid
+The tap repress timeout is the number of milliseconds within which a rapid
 press+release+press of a key will result in the tap action being held instead
 of the hold action activating.
 
-.Tap timeout in more detail
+.Tap repress timeout in more detail
 [%collapsible,indent=4]
 ====
-The way a `tap-hold` action works with respect to the tap timeout
+The way a `tap-hold` action works with respect to the tap repress timeout
 is often unclear to newcomers.
 To make it concrete, the output event sequence of the `tap-hold` action
-`(tap-hold $tap-timeout 200 a lctl)`
-for varying values of `$tap-timeout`
+`(tap-hold $tap-repress-timeout 200 a lctl)`
+for varying values of `$tap-repress-timeout`
 with a fixed input event sequence will be described.
 
 The input event sequence is:
@@ -1978,7 +2103,7 @@ The input event sequence is:
 - 300 ms elapses
 - release
 
-With `(dofvar $tap-timeout 0)`, the output event sequence is:
+With `(dofvar $tap-repress-timeout 0)`, the output event sequence is:
 
 - 50 ms elapses
 - press `a`
@@ -1988,10 +2113,10 @@ With `(dofvar $tap-timeout 0)`, the output event sequence is:
 - 100 ms elapses
 - release `lctl`
 
-The above output sequence is the same for all `$tap-timeout` values
+The above output sequence is the same for all `$tap-repress-timeout` values
 between and including `0` and `99`.
 
-For a value of `100` or greater for `$tap-timeout`,
+For a value of `100` or greater for `$tap-repress-timeout`,
 the output event sequence is instead:
 
 - 50 ms elapses
@@ -2038,6 +2163,14 @@ variants. The 5th parameter is another action, which will activate if the hold
 timeout expires as opposed to being triggered by other key actions, whereas the
 non `-timeout` variants will activate the hold action in both cases.
 
+The `release` variant also accepts an optional 6th argument,
+`reset-timeout-on-press` which if included changes the timeout behaviour.
+This flag will make the timeout duration reset if a new key is pressed.
+This may result in longer timeouts,
+but can help with more consistent hold activations;
+because it may be challenging to release a key in time
+to activate the hold action instead of the timeout action.
+
 - `tap-hold-release-keys` or `tap⬓↑keys`
 
 This variant takes a 5th parameter which is a list of keys
@@ -2055,12 +2188,27 @@ that are in `doflayer`, `dofalias`, etc. for the corresponding `dofsrc` key.
 [source]
 ----
 (dofalias
-  ;; tap: o    hold: arrows layer    timeout: backspace
-  oat (tap-hold-press-timeout   200 200 o @arr bspc)
-  ;; tap: e    hold: chords layer    timeout: esc
-  ect (tap-hold-release-timeout 200 200 e @chr esc)
   ;; tap: u    hold: misc layer      early tap if any of: (a o e) are pressed
   umk (tap-hold-release-keys 200 200 u @msc (a o e))
+)
+----
+
+- `tap-hold-release-tap-keys-release`
+
+This variant behaves nearly the same as `tap-hold-release-keys`,
+but has another condition with respect to the eager tap.
+It accepts a second list that activates the eager tap
+if the any key listed within is pressed then released;
+as opposed to only on a press.
+
+.Example:
+[source]
+----
+(dofalias
+  ;; tap: u    hold: misc layer      early tap if any of:
+  ;;                                 (z x c v) are pressed, OR
+  ;;                                 (a s d f) are pressed THEN released
+  umk2 (tap-hold-release-tap-keys-release 200 200 u @msc (z x c v) (a s d f))
 )
 ----
 
@@ -2082,12 +2230,29 @@ that are in `doflayer`, `dofalias`, etc. for the corresponding `dofsrc` key.
 [source]
 ----
 (dofalias
-  ;; tap: o    hold: arrows layer    timeout: backspace
-  oat (tap-hold-press-timeout   200 200 o @arr bspc)
-  ;; tap: e    hold: chords layer    timeout: esc
-  ect (tap-hold-release-timeout 200 200 e @chr esc)
   ;; tap: u    hold: misc layer      always tap if any of: (a o e) are pressed
   umk (tap-hold-except-keys 200 200 u @msc (a o e))
+)
+----
+
+- `tap-hold-tap-keys` or `tap⬓tapkeys`
+
+This variant takes a 5th parameter which is a list of keys
+that trigger an early tap when they are pressed.
+Unlike `tap-hold-release-keys`, pressing and releasing other keys
+does NOT activate hold early - the full hold timeout is always waited.
+This is useful for home row mods where fast typing should not trigger modifiers.
+
+The keys in the 5th parameter correspond to the physical input keys,
+or in other words the key that corresponds to `dofsrc`.
+
+.Example:
+[source]
+----
+(dofalias
+  ;; tap: a    hold: lsft    early tap if any of: (s d f) are pressed
+  ;; other keys do NOT trigger early hold
+  ath (tap-hold-tap-keys 200 200 a lsft (s d f))
 )
 ----
 
@@ -2136,7 +2301,7 @@ or an output-chord-prefixed list of more macro-actions.
 
 | `macro-repeat-$cancel-variant`
 | Repeat the macro while held.
-Cancels the final repeat according the the behaviour of one of the variants:
+Cancels the final repeat according the behaviour of one of the variants:
 `release-cancel`, `cancel-on-press`, `release-cancel-and-cancel-on-press`.
 |===
 
@@ -2610,8 +2775,8 @@ With `break`, further actions will not activate.
 The logic check is a list.
 The items within the list can either be key names or a special list check.
 A key name item evaluates to true if that key name
-is a currently active key output of Kanata upon activating `switch`
-The outer-most list evaluates to true as whole
+is a currently active key output of Kanata upon activating `switch`.
+The outer-most list evaluates to true
 if any of the items evaluates to true.
 
 .Syntax of logic check:
@@ -2690,7 +2855,7 @@ One case is a triple of:
 
 The default use of the logic check behaves similarly to fork.
 
-For example, the the logic check `(a b c)` will activate the corresponding action
+For example, the logic check `(a b c)` will activate the corresponding action
 if any of a, b, or c are currently pressed.
 
 TIP: the keys `nop0-nop9` can be used as no-op outputs that
@@ -2974,7 +3139,7 @@ and be typed as kanata outputs.
 | `$stdout-log-level`
 | Log level for stdout of the command. Must be `+debug+`, `+info+`, `+warn+`, `+error+`, or `+none+`.
 
-| `$stdout-log-level`
+| `$stderr-log-level`
 | Log level for stderr of the command. Must be `+debug+`, `+info+`, `+warn+`, `+error+`, or `+none+`.
 |===
 
@@ -3061,6 +3226,227 @@ chorded lists are supported. Other actions are not supported.
 
   ;; powershell: type date-time as YYYY-MM-DD HH:MM
   pdp (cmd-output-keys powershell.exe "echo '(' (((Get-Date -Format 'yyyy-MM-dd HH:mm').toCharArray() -join ' ').insert(20, ' spc ') -replace ':','S-;') ')'")
+)
+----
+
+[[push-msg]]
+=== push-msg
+
+NOTE: This action requires the TCP server to be enabled via the
+<<args-port,`-p` / `--port`>> command line argument.
+If used without the TCP server enabled, a warning will be logged
+and the action will have no effect.
+
+**Reference**
+
+The `push-msg` action sends an arbitrary message to all connected TCP clients.
+This enables communication between your keyboard configuration and external tools
+without the security risks or performance overhead of executing shell commands.
+
+.Syntax:
+[source]
+----
+(push-msg $message)
+----
+
+[cols="1,3"]
+|===
+| `$message`
+| A string or S-expression to send to TCP clients.
+  Strings are sent as-is; S-expressions are converted to JSON arrays.
+|===
+
+**Description**
+
+The `push-msg` action broadcasts a message to all TCP clients connected to Kanata's
+TCP server. This is useful for:
+
+- Triggering external tool actions from keyboard shortcuts
+- Layer change notifications to status bars or tray applications
+- Integration with automation tools like Raycast, Alfred, or Hammerspoon
+- Controlling other applications without spawning shell processes
+
+Messages are sent as newline-terminated JSON in the format:
+
+[source,json]
+----
+{"MessagePush":{"message":"your-message-here"}}
+----
+
+Compared to the <<cmd>> action, `push-msg` offers:
+
+- **Better security**: No shell execution, no privilege escalation risks
+- **Better performance**: Sub-millisecond latency vs ~100ms for command execution
+- **No special flags**: Does not require `danger-enable-cmd` in dofcfg
+
+.Example - Basic messages:
+[source]
+----
+(dofalias
+  ;; Send a simple string message
+  notify (push-msg "key-pressed")
+
+  ;; Send layer change notification
+  nav-on (push-msg "layer:nav:activated")
+  nav-off (push-msg "layer:nav:deactivated")
+)
+----
+
+.Example - Integration with external tools:
+[source]
+----
+(dofalias
+  ;; Trigger a Raycast extension
+  raycast-clip (push-msg "raycast:clipboard-history")
+
+  ;; Control media playback via external script
+  play-pause (push-msg "media:toggle")
+  next-track (push-msg "media:next")
+
+  ;; Switch keyboard layouts via external tool
+  layout-next (push-msg "xkb:next-layout")
+)
+----
+
+.Example - Using with defvirtualkeys for external triggering:
+[source]
+----
+;; Define virtual keys that can be triggered via TCP's ActOnFakeKey command
+;; External tools can trigger these using: {"ActOnFakeKey":{"name":"email-sig","action":"Tap"}}
+(defvirtualkeys
+  email-sig (macro S-b e s t spc r e g a r d s , ret ret S-j o h n)
+  nav-mode (layer-switch nav)
+)
+
+;; Combine push-msg with other actions
+(dofalias
+  launch-term (multi
+    (push-msg "app:launch:terminal")
+    (layer-switch base)
+  )
+)
+----
+
+To receive these messages, connect a TCP client to Kanata's server port.
+See the https://github.com/jtroo/kanata/blob/main/example_tcp_client/src/main.rs[example TCP client]
+for implementation guidance.
+
+[[clipboard-actions]]
+=== clipboard actions
+
+**Reference**
+
+Clipboard actions can manipulate the operating system clipboard
+alongside "save ids".
+To paste, you would use an action such as `C-v`;
+Kanata has no builtin paste action.
+
+.Syntax:
+[source]
+----
+(clipboard-set   $clipboard-string)
+(clipboard-save  $save-id)
+(clipboard-restore    $save-id)
+(clipboard-save-swap  $save-id $save-id)
+(clipboard-cmd-set  $binary $arg1 $arg2 ... $argN)
+(clipboard-save-cmd-set  $save-id $binary $arg1 $arg2 ... $argN)
+----
+
+[cols="1,3"]
+|===
+| `clipboard-set`
+| Sets the clipboard to the specified string.
+
+| `clipboard-save`
+| Saves the current clipboard content with the specified ID.
+
+| `clipboard-restore`
+| Sets the clipboard to content saved with the specified ID.
+If the save ID content is blank, this will do nothing.
+
+| `clipboard-save-swap`
+| Swaps the content of two save IDs.
+
+| `clipboard-cmd-set`
+| Sets the clipboard to the output of the command.
+The current content of the clipboard is passed to stdin of the command
+if the current content is text.
+If the content is an image, nothing is passed to stdin.
+
+| `clipboard-save-cmd-set`
+| Sets the save ID content to the output of the command.
+The current content of the save ID is passed to stdin of the command
+if the current content is text.
+If the content is an image, nothing is passed to stdin.
+
+| `$clipboard-string`
+| Fixed string to set the operating system clipboard to.
+
+| `$save-id`
+| A number `0-65535` representing an ID of saved clipboard content.
+
+| `$binary`
+| Executable binary to run.
+
+| `$arg`
+| Argument passed into the binary.
+|===
+
+**Description**
+
+You can use clipboard actions to save clipboard content,
+paste arbitrary content,
+and then restore the original clipboard content.
+This functionality is similar to what some text expanders do.
+You can additionally use shell commands to manipulate
+clipboard content in arbitrary ways.
+This can all be done in a single command via <<macro>>.
+
+Note that you will likely want to add delays in between components,
+because clipboard systems take some time to propagate updates.
+
+The example below is a macro that pastes the content of the clipboard
+twice with a space in between,
+while restoring the original clipboard content at the end.
+Notable is that the example uses `C-v` but this may not work for you.
+If you have OS-level remapping, the `v` may be different
+to effectively paste.
+Something that may also work is `S-ins`
+
+.Example:
+[source]
+----
+(macro
+ (clipboard-save 0)
+ 20
+ (clipboard-cmd-set powershell.exe -c r#"$v = ($Input | Select-Object -First 1); Write-Host -NoNewLine "$v $v""#)
+ 300
+ C-v
+ (clipboard-restore 0)
+)
+----
+
+As another example you can use templates
+with clipboard actions to have a convenient clipboard-based
+text output while preserving the old clipboard content.
+This can fit the use case of "text expansion".
+
+.Example:
+[source]
+----
+(doftemplate text-paste (text)
+ (macro
+  (clipboard-save 0)
+  20
+  (clipboard-set $text)
+  300
+  C-v
+  (clipboard-restore 0)
+ ))
+
+(dofalias
+ myalias1 (t! text-paste "Hello world")
+ myalias2 (t! text-paste "Goodbye my old friend")
 )
 ----
 
@@ -3206,8 +3592,8 @@ for determining if the configuration is used or not.
 If the value of the environment variable (set only on kanata startup)
 matches `env-var-value`, the configuration is used; otherwise it is ignored.
 An empty string for `env-var-value` — `""` — will use the configuration
-if the environment variable an empty string
-and also if the variable is unset/missing entirely.
+if the environment variable is an empty string
+and also if the environment variable is not defined.
 
 .Example:
 [source]
@@ -3688,6 +4074,67 @@ the swapped "i" and "o" keys.
 (doflayer block • • _ )
 ----
 
+[[mouse-movement-key]]
+=== Linux or Windows-interception only: mouse-movement-key
+
+Accepts a single key name.
+When configured, whenever a mouse cursor movement is received,
+the configured key name will be "tapped" by Kanata,
+activating the key's action.
+
+This enables reporting of every relative mouse movement, which
+corresponds to standard mice, trackballs, trackpads and
+trackpoints. Absolute movements, which can be generated by
+touchscreens, drawing tablets and some mouse replacement or
+accessibility software, are ignored. Scrolling events and mouse
+buttons are also ignored.
+
+The intended use of these events is to provide a way to automatically
+enable a mouse keys layer while mousing, which can be disabled by a
+timeout or typing on other keys, rather than explicit toggling. see
+cfg_examples/automousekeys-*.kbd for more.
+
+The `mvmt` key name is specially intended for this purpose.  It has no
+output key mapping and cannot be supplied as an action; however, any
+key may be used.
+
+Supports live reload on Linux, but with Windows-interception, this
+option must be present on startup to enable mouse movement event
+collection, so restart is required to enable it. Changing the key name
+is always supported, however.
+
+.Example:
+[source]
+----
+(dofcfg
+  process-unmapped-keys yes
+  mouse-movement-key mvmt
+)
+
+(dofsrc
+  k     l     ;
+  mvmt
+)
+
+(defvirtualkeys
+  mouse (layer-while-held mouse-layer)
+)
+
+(dofalias
+  mhld (hold-for-duration 750 mouse)
+)
+
+(doflayer qwerty
+  k     l     ;
+  @mhld
+)
+
+(doflayer mouse-layer
+  mlft  mmid  mrgt
+  @mhld
+)
+----
+
 [[linux-only-linux-dev]]
 === Linux only: linux-dev
 
@@ -3739,19 +4186,27 @@ item contains spaces.
 )
 ----
 
+For devices that do not have an easily identifiable device path like Bluetooth
+keyboards using the `linux-dev-names-include` option below is recommended.
+
 [[linux-only-linux-dev-names-include]]
 === Linux only: linux-dev-names-include
 
 In the case that `linux-dev` is omitted,
 this option defines a list of device names that should be included.
 Device names that do not exist in the list will be ignored.
-This option is parsed identically to `linux-dev`.
 
-Kanata will print device names on startup with log lines that look like below:
+Device paths are not supported by this option; instead use the device names
+as output by Kanata during startup.  Launch Kanata with a
+<<minimal-configuration,minimal configuration>> (any use of a `linux-dev*`
+option may hide devices) and look for lines beginning with "registering":
 
 ----
-registering /dev/input/eventX: "Name goes here"
+registering /dev/input/eventX: "Device name 1"
+registering /dev/input/eventY: "Device name 2"
 ----
+
+The entire name within quotes must be used, partial matches and regex's are not supported.
 
 .Example:
 [source]
@@ -3769,7 +4224,7 @@ registering /dev/input/eventX: "Name goes here"
 
 In the case that `linux-dev` is omitted,
 this option defines a list of device names that should be excluded.
-This option is parsed identically to `linux-dev`.
+This option is parsed identically to `linux-dev-names-include`.
 
 The `linux-dev-names-include` and `linux-dev-names-exclude` options
 are not mutually exclusive
@@ -3916,6 +4371,20 @@ changing their behavior as well.
 )
 ----
 
+[[linux-only-linux-output-device-name]]
+=== Linux only: linux-output-device-name
+
+This option defines the name of the evdev output device.
+The default value is kanata.
+
+.Example:
+[source]
+----
+(dofcfg
+   linux-output-device-name "kanata output"
+)
+----
+
 [[linux-only-linux-output-device-bus-type]]
 === Linux only: linux-output-device-bus-type
 
@@ -3956,6 +4425,28 @@ Use `kanata -l` or `kanata --list` to list the available keyboards.
 )
 ----
 
+[[macos-only-macos-dev-names-exclude]]
+=== macOS only: macos-dev-names-exclude
+
+This option defines a list of device names that should be excluded.
+By default, kanata will try to detect which input devices are keyboards and try
+to intercept them all. However, you may specify certain keyboard devices to be ignored
+using the `macos-dev-names-exclude` configuration.
+Device names that do not exist in the list will be included.
+This option is parsed identically to `linux-dev`.
+
+Use `kanata -l` or `kanata --list` to list the available keyboards.
+
+.Example:
+[source]
+----
+(dofcfg
+  macos-dev-names-exclude (
+    "Device name 1"
+    "Device name 2"
+  )
+)
+----
 [[windows-only-windows-altgr]]
 === Windows only: windows-altgr
 
@@ -4060,6 +4551,42 @@ they are an arbitrary length and can be very long.
   windows-interception-keyboard-hwids (
     "70, 0, 60, 0"
     "71, 72, 73, 74"
+  )
+)
+----
+
+=== Windows only: windows-interception-keyboard-hwids-exclude[[windows-only-windows-interception-keyboard-hwids-exclude]]
+
+This dofcfg item allows you to exclude certain keyboards from being intercepted.
+You cannot define this alongside the inclusive keyboard configuration.
+
+It is parsed identically to the inclusive configuration.
+
+.Example:
+[source]
+----
+(dofcfg
+  windows-interception-keyboard-hwids-exclude (
+    "70, 0, 60, 0"
+    "71, 72, 73, 74"
+  )
+)
+----
+
+=== Windows only: windows-interception-mouse-hwids-exclude[[windows-only-windows-interception-mouse-hwids-exclude]]
+
+This dofcfg item allows you to exclude certain mice from being intercepted.
+You cannot define this alongside the inclusive mouse configuration.
+
+It is parsed identically to the inclusive configuration.
+
+.Example:
+[source]
+----
+(dofcfg
+  windows-interception-mouse-hwids-exclude (
+    "70, 0, 60, 0"
+    "71, 0, 62, 0"
   )
 )
 ----
@@ -4183,6 +4710,293 @@ a non-applicable operating system.
 )
 ----
 
+== Command line arguments[[cli-args]]
+
+When executing Kanata, you can pass a variety of arguments to the program
+to change Kanata's behaviour.
+This section describes the purpose and usage of these arguments.
+
+[[args-help]]
+=== Show help text: `-h`, `--help`
+
+Only show help text that describes these arguments,
+then exit the program.
+
+[[args-config-file]]
+=== Configuration file(s): `-c`, `--cfg`
+
+Configuration file(s) to use with Kanata.
+When not specified, default file locations are checked.
+The default files checked depend on your operating system
+and are described by `--help`.
+
+This argument can be used more than once;
+see <<live-reload>> to understand the behaviour of this.
+The startup configuration will be the first file listed.
+
+[[args-tcp]]
+=== TCP server address: `-p`, `--port`
+
+Enable the TCP server capability and listen on either:
+- a specified port, on all IP addresses
+- a specific `IP:PORT`
+
+This enables use cases such as
+https://github.com/jtroo/kanata?tab=readme-ov-file#community-projects-related-to-kanata[application aware switching].
+
+The protocol is plaintext newline-terminated JSON.
+The source of truth is the
+https://github.com/jtroo/kanata/blob/main/tcp_protocol/src/lib.rs[TCP protocol code].
+
+You may also be interested in the
+https://github.com/jtroo/kanata/blob/main/example_tcp_client/src/main.rs[example client].
+
+==== TCP Protocol Overview
+
+The TCP server uses a simple request/response model with JSON messages.
+Each message is a single line of JSON terminated by a newline (`\n`).
+
+- **Client → Server**: Commands to control Kanata (reload config, switch layers, etc.)
+- **Server → Client**: Responses to commands and event notifications (layer changes, config reloads, etc.)
+
+==== Client Commands
+
+These JSON messages can be sent from a TCP client to control Kanata:
+
+===== Layer Control
+
+[cols="1,2"]
+|===
+| Command | Description
+
+| `{"ChangeLayer":{"new":"layer-name"}}`
+| Switch to the specified layer. Equivalent to the `layer-switch` keyboard action.
+
+| `{"RequestLayerNames":{}}`
+| Request a list of all defined layer names. Server responds with `LayerNames`.
+
+| `{"RequestCurrentLayerName":{}}`
+| Request the name of the currently active layer. Server responds with `CurrentLayerName`.
+
+| `{"RequestCurrentLayerInfo":{}}`
+| Request the current layer's name and full configuration text. Server responds with `CurrentLayerInfo`.
+|===
+
+.Example - Query and switch layers:
+[source,bash]
+----
+# Get all layer names
+echo '{"RequestLayerNames":{}}' | nc localhost 7070
+
+# Get current layer
+echo '{"RequestCurrentLayerName":{}}' | nc localhost 7070
+
+# Switch to nav layer
+echo '{"ChangeLayer":{"new":"nav"}}' | nc localhost 7070
+----
+
+===== Virtual Key Actions
+
+[cols="1,2"]
+|===
+| Command | Description
+
+| `{"ActOnFakeKey":{"name":"key-name","action":"Tap"}}`
+| Trigger a virtual key defined in `defvirtualkeys`. Actions: `Press`, `Release`, `Tap`, `Toggle`.
+|===
+
+Virtual keys must be defined in your configuration using `defvirtualkeys`.
+See the <<virtual-keys>> section for details.
+
+.Example - Trigger a text expansion macro:
+[source]
+----
+;; In your config:
+(defvirtualkeys
+  email-sig (macro S-b e s t spc r e g a r d s)
+)
+
+;; From TCP client:
+echo '{"ActOnFakeKey":{"name":"email-sig","action":"Tap"}}' | nc localhost 7070
+----
+
+===== Mouse Control
+
+[cols="1,2"]
+|===
+| Command | Description
+
+| `{"SetMouse":{"x":100,"y":200}}`
+| Set the mouse cursor position to absolute screen coordinates.
+|===
+
+This is the TCP equivalent of the <<set-mouse>> keyboard action.
+
+===== Configuration Reload
+
+[cols="1,2"]
+|===
+| Command | Description
+
+| `{"Reload":{}}`
+| Reload the current configuration file. Equivalent to `lrld` keyboard action.
+
+| `{"ReloadNext":{}}`
+| Load the next configuration file in the list. Equivalent to `lrnx` keyboard action.
+
+| `{"ReloadPrev":{}}`
+| Load the previous configuration file in the list. Equivalent to `lrpv` keyboard action.
+
+| `{"ReloadNum":{"index":0}}`
+| Load configuration file at the specified index (0-based).
+
+| `{"ReloadFile":{"path":"/path/to/config.kbd"}}`
+| Load a specific configuration file by path.
+|===
+
+All reload commands support optional `wait` and `timeout_ms` fields for synchronous confirmation:
+
+[source,json]
+----
+{"Reload":{"wait":true,"timeout_ms":5000}}
+----
+
+When `wait` is `true`, the server blocks until the reload completes or times out, then sends a `ReloadResult` message. The `timeout_ms` field specifies the maximum wait time in milliseconds (default: 5000).
+
+===== Server Information
+
+[cols="1,2"]
+|===
+| Command | Description
+
+| `{"Hello":{}}`
+| Request server version and capabilities. Server responds with `HelloOk`.
+|===
+
+==== Server Messages
+
+These JSON messages are sent from Kanata to connected TCP clients:
+
+===== Event Notifications
+
+These are sent automatically when events occur:
+
+[cols="1,2"]
+|===
+| Message | Description
+
+| `{"LayerChange":{"new":"layer-name"}}`
+| Sent when the active layer changes.
+
+| `{"ConfigFileReload":{"new":"/path/to/config.kbd"}}`
+| Sent when a configuration file is reloaded.
+
+| `{"MessagePush":{"message":"your-message"}}`
+| Sent when a `push-msg` action is triggered from the keyboard configuration.
+
+| `{"Error":{"msg":"error description"}}`
+| Sent when an error occurs processing a command.
+|===
+
+===== Query Responses
+
+These are sent in response to client queries:
+
+[cols="1,2"]
+|===
+| Message | Description
+
+| `{"LayerNames":{"names":["base","nav","num"]}}`
+| Response to `RequestLayerNames`. Contains all defined layer names.
+
+| `{"CurrentLayerName":{"name":"base"}}`
+| Response to `RequestCurrentLayerName`. Contains the active layer name.
+
+| `{"CurrentLayerInfo":{"name":"base","cfg_text":"..."}}`
+| Response to `RequestCurrentLayerInfo`. Contains the layer name and its full configuration text.
+
+| `{"HelloOk":{"version":"1.11.0","protocol":1,"capabilities":[...]}}`
+| Response to `Hello`. Contains server version, protocol version, and supported capabilities.
+
+| `{"ReloadResult":{"ok":true}}`
+| Response to reload commands when `wait` was `true`. Indicates whether the config reload succeeded. If timed out, includes `timeout_ms`.
+|===
+
+For a complete implementation example, see the
+https://github.com/jtroo/kanata/blob/main/example_tcp_client/src/main.rs[example TCP client].
+
+[[args-quiet]]
+=== Disable logs other than errors: `-q`, `--quiet`
+
+Silence info and warning logs so that only errors are logged.
+This might be desirable when running in the background as a system service.
+
+[[args-debug]]
+=== Enable debug logs: `-d`, `--debug`
+
+Add extra debug logging.
+This is helpful when diagnosing an issue
+or discovering key names.
+
+[[args-trace]]
+=== Enable trace logs: `-t`, `--trace`
+
+Add extra trace logging.
+Also includes debug logging.
+This is sometimes helpful when diagnosing an issue,
+but is very verbose.
+
+[[args-nodelay]]
+=== Remove startup delay: `-n`, `--nodelay`
+
+By default, Kanata adds a delay before reading keyboard inputs.
+This helps protect against stale states
+when started from a terminal.
+
+However, this may be undesirable
+when running as a background service.
+
+[[args-check]]
+=== Only check configuration: `--check`
+
+Check the configuration file validity and then exit.
+
+[[args-log-layer-changes]]
+=== Force log changes: `--log-layer-changes`
+
+Your final desired `dofcfg` could be to have logging of layer changes as false.
+However, for testing purposes you may want to temporarily log the layers.
+This configuration forces logging to happen for this use case.
+
+[[args-no-wait]]
+=== Skip exit prompt: `--no-wait`
+
+By default, kanata displays "Press enter to exit" and waits for user input
+before exiting. This flag skips that prompt and exits immediately.
+
+This is useful when running kanata as a background service (e.g., systemd)
+where you want automatic restart on failure. Without this flag,
+the service would hang waiting for stdin input that never comes.
+
+[[args-linux-dev-symlink]]
+=== Linux only - Device symlink path: `-s`, `--symlink-path`
+
+If you want another program to consume the Kanata device output,
+you can use this flag to have a consistent device filesystem path.
+
+[[args-wait-device]]
+=== Linux only - Wait before device grab attempt: `-w`, `--wait-device-ms`
+
+Some devices take a while to become ready and can fail to be grabbed.
+This configuration adds a delay before trying to grab devices
+in case this is an issue impacting you.
+
+[[args-macos-list-devices]]
+=== macOS only - Only list keyboards: `-l`, `--list`
+
+List keyboard names that can be used
+within dofcfg and then exit.
+
 == Advanced features[[advanced-features]]
 [[virtual-keys]]
 === Virtual keys
@@ -4197,6 +5011,10 @@ Activate a virtual key action when pressing the associated input key.
 Activate a virtual key action when releasing the associated input key.
 * `(on-idle <idle time> <action> <virtual key name>)`:
 Activate a virtual key action when kanata has been idle
+for at least `idle time` milliseconds.
+* `(on-physical-idle <idle time> <action> <virtual key name>)`:
+Activate a virtual key action when the physical keyboard has
+had all keys released
 for at least `idle time` milliseconds.
 * `(hold-for-duration <hold time> <virtual key name>`):
 Press a virtual key for `hold time` milliseconds.
@@ -4227,6 +5045,8 @@ For example, if a long-running macro is playing,
 or kanata is waiting for the timeout of actions such as `caps-word` or `tap-dance`,
 kanata is not yet idle, and the tick count for the `<idle time>` parameter
 will not yet be counting even if you no longer have any keyboard keys pressed.
+The variant `on-physical-idle` may be more desirable if you want the timer
+to only start based on having all keyboard keys be released.
 
 .Example:
 [source]
@@ -4527,6 +5347,37 @@ The second parameter is an override for `sequence-input-mode`:
 
 ;; Enter sequence mode and input . with a timeout of 250 and using hidden-delay-type
 (dofalias dot-sequence (macro (sequence 250 hidden-delay-type) 10 .))
+----
+
+==== sequence-noerase
+
+When you have a keyboard locale that uses dead keys,
+you may be pressing two keys that only actually output one symbol.
+By default, when the `visible-backspaced` input mode does the backtracking backspaces,
+it backspaces according to input count.
+With dead keys, this may result in too many backspaces.
+
+The `sequence-noerase` action is a no-output action
+that tells the sequences action to have one fewer backspace
+when backtracking with visible-backspaced.
+
+.Example:
+[source]
+----
+(doflayermap (base)
+  0 sldr
+  u (t! maybe-noerase u)
+)
+(doftemplate maybe-noerase (char)
+  (multi
+    (switch
+      ((key-history ' 1)) (sequence-noerase 1) fallthrough
+      () $char break
+   ))
+)
+(defvirtualkeys seq-output-1 (macro a b c d e f g))
+(dofseq seq-output-1 (' u))
+
 ----
 
 ==== More about sequences
@@ -4988,14 +5839,13 @@ Using unicode symbols `🕐`,`↓`,`↑`,`⟳` allows skipping the `:` separator
 
 **Reference**
 
-You may define a single `+dofzippy-experimental+` configuration item.
-As suggested by the -experimental label, this feature is relatively recent.
-When using this you are at higher likelihood of bugs and breaking changes.
+You may define a single `+dofzippy+` configuration item.
+This configuration enables chorded text expansion.
 
 .Configuration syntax within the kanata configuration
 [source]
 ----
-(dofzippy-experimental
+(dofzippy
   $zippy-filename ;; required
   on-first-press-chord-deadline $deadline-millis  ;; optional
   idle-reactivate-time          $idle-time-millis ;; optional
@@ -5017,7 +5867,7 @@ When using this you are at higher likelihood of bugs and breaking changes.
 | Relative or absolute file path.
 If relative, its path is relative to
 the directory containing the kanata configuration file.
-This must be the first item following `dofzippy-experimental`.
+This must be the first item following `dofzippy`.
 
 | `$deadline-millis`
 | Number of milliseconds.
@@ -5122,11 +5972,11 @@ will activate when zippy is enabled
 and all the defined chord keys are pressed simultaneously.
 The order of presses is not important.
 
-| `$chord-follow`
+| `$follow-chord`
 | 0 or more chords, used the same way as `$chord`.
 Having follow chords means the `$output` on the same line
 will activate upon first activating the earlier chord(s) in the same line,
-releasing all keys, and pressing the keys in `$chord-followN.M`.
+releasing all keys, and pressing the keys in `$follow-chordN.M`.
 Follow chords are separated from the previous chord by a space.
 If using a space in the follow chord, use two spaces;
 for an example see `Washington` in the sample below.
@@ -5151,7 +6001,7 @@ to inform kanata of additional mappings that may use Shift or AltGr.
 .Sample kanata configuration
 [source]
 ----
-(dofzippy-experimental
+(dofzippy
   zippy.txt
   on-first-press-chord-deadline 500
   idle-reactivate-time          500
@@ -5210,7 +6060,7 @@ inputs, layers, switch logic and other configurations.
 This is similar to how sequences operate
 and is unlike chords(v1) and chordsv2.
 Furthermore, outputs are all eager like `visible-backspaced` on sequences.
-If a zippchord activation occurs, typed keys are backspaced.
+If a zippychord activation occurs, typed keys are backspaced.
 
 To give an example, if one configures zippychord with a line like:
 
